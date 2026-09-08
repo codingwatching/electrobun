@@ -756,6 +756,8 @@ jobs:
 
       - name: Install Hutch
         uses: ./.github/actions/install-hutch
+        with:
+          channel: canary
 
       - name: Recheck npm channel before mutable publication
         shell: bash
