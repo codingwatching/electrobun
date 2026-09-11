@@ -191,6 +191,9 @@ test("two native cores own distinct loopback ports and decrypt only their own we
   } finally {
     for (const socket of sockets) socket.close();
     await Promise.all(peers.map((peer) => peer.stop()));
-    await rm(directory, { recursive: true, force: true });
+    // Windows can retain the just-unloaded test DLL briefly after every peer
+    // exits. Let fs.rm retry transient EPERM/EBUSY failures before failing the
+    // test; these options are harmless on platforms that unlink immediately.
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

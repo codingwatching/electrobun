@@ -9,6 +9,7 @@ export const releaseCheckTasks = [
 	["Clean template artifacts", "clean:templates"],
 	["Typecheck", "typecheck"],
 	["Development command tests", "dev:test"],
+	["Core host transport tests", "test:core-host-transport"],
 	["Native symbol contract tests", "test:native-symbol-contract"],
 	["Native devkit manifest tests", "test:devkit-manifest"],
 	["Version bump tests", "test:version-bump"],

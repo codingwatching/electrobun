@@ -50,6 +50,7 @@ const expectedReleaseTasks = [
 	"clean:templates",
 	"typecheck",
 	"dev:test",
+	"test:core-host-transport",
 	"test:native-symbol-contract",
 	"test:devkit-manifest",
 	"test:version-bump",

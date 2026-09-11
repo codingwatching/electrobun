@@ -203,6 +203,136 @@ const HostTransportState = struct {
     port: u32 = 0,
 };
 
+// Zig's Windows AFD listener does not expose SO_EXCLUSIVEADDRUSE before bind,
+// so create only the listening socket through Winsock and hand its overlapped
+// handle back to the existing std.Io accept loop.
+const windows_host_transport_listener = if (builtin.os.tag == .windows) struct {
+    const win = std.os.windows;
+    const winsock = win.ws2_32;
+
+    const ListenError = error{
+        WinsockInitializationFailed,
+        SocketCreationFailed,
+        ExclusiveAddressUseFailed,
+        AddressInUse,
+        SocketBindFailed,
+        SocketListenFailed,
+    };
+
+    const invalid_socket = std.math.maxInt(usize);
+    const socket_error: c_int = -1;
+    const so_exclusive_addr_use: c_int = -5; // ~SO_REUSEADDR
+    const wsa_eacces: c_int = 10013;
+    const wsa_eaddrinuse: c_int = 10048;
+    const wsa_flag_overlapped: win.DWORD = 0x01;
+    const wsa_flag_no_handle_inherit: win.DWORD = 0x80;
+
+    extern "ws2_32" fn WSAStartup(version: u16, data: *anyopaque) callconv(.winapi) c_int;
+    extern "ws2_32" fn WSASocketW(
+        address_family: c_int,
+        socket_type: c_int,
+        protocol: c_int,
+        protocol_info: ?*anyopaque,
+        group: u32,
+        flags: win.DWORD,
+    ) callconv(.winapi) usize;
+    extern "ws2_32" fn setsockopt(
+        socket: usize,
+        level: c_int,
+        option_name: c_int,
+        option_value: [*]const u8,
+        option_length: c_int,
+    ) callconv(.winapi) c_int;
+    extern "ws2_32" fn bind(
+        socket: usize,
+        address: *const winsock.sockaddr,
+        address_length: c_int,
+    ) callconv(.winapi) c_int;
+    extern "ws2_32" fn listen(socket: usize, backlog: c_int) callconv(.winapi) c_int;
+    extern "ws2_32" fn closesocket(socket: usize) callconv(.winapi) c_int;
+    extern "ws2_32" fn WSAGetLastError() callconv(.winapi) c_int;
+
+    // startHostTransportServer serializes initialization with host_transport_mutex.
+    // Keep Winsock initialized for the core library's process lifetime.
+    var initialized = false;
+
+    fn ensureInitialized() ListenError!void {
+        if (initialized) return;
+        var data: [512]u8 align(@alignOf(usize)) = undefined;
+        if (WSAStartup(0x0202, @ptrCast(&data)) != 0) {
+            return error.WinsockInitializationFailed;
+        }
+        initialized = true;
+    }
+
+    fn open(address: std.Io.net.IpAddress) ListenError!std.Io.net.Server {
+        try ensureInitialized();
+
+        const socket = WSASocketW(
+            winsock.AF.INET,
+            winsock.SOCK.STREAM,
+            winsock.IPPROTO.TCP,
+            null,
+            0,
+            wsa_flag_overlapped | wsa_flag_no_handle_inherit,
+        );
+        if (socket == invalid_socket) return error.SocketCreationFailed;
+        errdefer _ = closesocket(socket);
+
+        var exclusive: c_int = 1;
+        if (setsockopt(
+            socket,
+            winsock.SOL.SOCKET,
+            so_exclusive_addr_use,
+            @ptrCast(&exclusive),
+            @sizeOf(c_int),
+        ) == socket_error) return error.ExclusiveAddressUseFailed;
+
+        const ip4 = switch (address) {
+            .ip4 => |value| value,
+            else => return error.SocketBindFailed,
+        };
+        var socket_address: winsock.sockaddr.in = .{
+            .port = std.mem.nativeToBig(u16, ip4.port),
+            .addr = @bitCast(ip4.bytes),
+        };
+        if (bind(
+            socket,
+            @ptrCast(&socket_address),
+            @sizeOf(winsock.sockaddr.in),
+        ) == socket_error) {
+            return switch (WSAGetLastError()) {
+                wsa_eacces, wsa_eaddrinuse => error.AddressInUse,
+                else => error.SocketBindFailed,
+            };
+        }
+        if (listen(socket, std.Io.net.default_kernel_backlog) == socket_error) {
+            return switch (WSAGetLastError()) {
+                wsa_eaddrinuse => error.AddressInUse,
+                else => error.SocketListenFailed,
+            };
+        }
+
+        return .{
+            .socket = .{
+                .handle = @ptrFromInt(socket),
+                .address = address,
+            },
+            .options = .{ .mode = .stream, .protocol = .tcp },
+        };
+    }
+
+    fn close(server: *std.Io.net.Server) void {
+        _ = closesocket(@intFromPtr(server.socket.handle));
+        server.* = undefined;
+    }
+} else struct {};
+
+const HostTransportListenError = if (builtin.os.tag == .windows)
+    windows_host_transport_listener.ListenError
+else
+    std.Io.net.IpAddress.ListenError;
+
 const DefaultWebviewCallbacks = struct {
     navigation_callback: ?DecideNavigationHandler = null,
     webview_event_handler: ?WebviewEventHandler = null,
@@ -1357,9 +1487,25 @@ fn handleHostTransportConnection(stream: std.Io.net.Stream) void {
     clearWebviewSocketHandleIfCurrent(webview_id, stream.socket.handle);
 }
 
+fn listenHostTransport(address: std.Io.net.IpAddress) HostTransportListenError!std.Io.net.Server {
+    if (builtin.os.tag == .windows) {
+        return windows_host_transport_listener.open(address);
+    }
+    return address.listen(coreIo(), .{ .reuse_address = false });
+}
+
+fn closeHostTransportServer(server: *std.Io.net.Server) void {
+    if (builtin.os.tag == .windows) {
+        windows_host_transport_listener.close(server);
+    } else {
+        server.deinit(coreIo());
+    }
+}
+
 fn hostTransportAcceptLoop(server: std.Io.net.Server) void {
     const io = coreIo();
     var listener = server;
+    defer closeHostTransportServer(&listener);
     while (true) {
         const connection_stream = listener.accept(io) catch break;
         const thread = std.Thread.spawn(.{}, handleHostTransportConnection, .{connection_stream}) catch {
@@ -1403,9 +1549,10 @@ fn startHostTransportServer(requested_port: u32) bool {
         };
 
         // Each process owns its webview IDs and encryption keys. Zig's
-        // reuse_address also enables SO_REUSEPORT, which would let another
-        // instance accept this process's encrypted RPC connections.
-        var server = address.listen(coreIo(), .{ .reuse_address = false }) catch |err| switch (err) {
+        // Unix keeps address reuse disabled. Windows additionally sets
+        // SO_EXCLUSIVEADDRUSE before bind because reuse_address=false alone
+        // does not request exclusive ownership in Zig's current AFD path.
+        var server = listenHostTransport(address) catch |err| switch (err) {
             error.AddressInUse => {
                 if (current_port == port_limit) {
                     break;
@@ -1422,7 +1569,7 @@ fn startHostTransportServer(requested_port: u32) bool {
         // The loop always binds a concrete port, so the bound port is known.
         const actual_port = current_port;
         const thread = std.Thread.spawn(.{}, hostTransportAcceptLoop, .{server}) catch |err| {
-            server.deinit(coreIo());
+            closeHostTransportServer(&server);
             setLastError("Failed to spawn websocket server thread: {s}", .{@errorName(err)});
             return false;
         };
