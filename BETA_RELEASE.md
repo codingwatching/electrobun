@@ -24,10 +24,17 @@ For a complete pre-release pass on each desktop VM, run this from `package`:
 hutch test:vm
 ```
 
-It runs the Kitchen automated tests with the Cottontail main process and system
-webview, runs the complete install/update/uninstall lifecycle, and then runs
-`check:release`. All three stages run even if an earlier stage fails; the task
-prints a combined failure summary and exits nonzero at the end.
+It runs the Kitchen automated tests for the single Cottontail + system-webview
+matrix entry (without bundled CEF), runs the complete install/update/uninstall
+lifecycle, and then runs `check:release`. All three stages run even if an earlier
+stage fails; the task prints a combined failure summary and exits nonzero at the
+end.
+
+Kitchen tests declare hard renderer requirements explicitly. A requested
+`renderer: "cef"` is not itself a requirement: renderer-neutral tests preserve
+that request so system-only builds exercise Electrobun's CEF-to-system fallback.
+Only tests whose stated purpose and assertions require actual CEF are skipped
+when CEF is not bundled.
 
 The updater lifecycle is intentionally a local desktop-VM test and does not run
 as part of `check:release`, the `push:*` tasks, or release CI. When working on

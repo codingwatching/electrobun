@@ -25,6 +25,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-14
@@ -94,6 +95,10 @@ jobs:
 
       - name: Install dependencies
         run: hutch run install
+        working-directory: package
+
+      - name: Test npm bootstrap and release tooling
+        run: hutch test:npm-bootstrap
         working-directory: package
 
       - name: Test macOS docked Web Inspector layout
@@ -301,10 +306,23 @@ jobs:
           HUTCH_ELECTROBUN_DEVKIT_ROOT: ${{ github.workspace }}/package/dist
 
       - name: Test Kitchen AUTO_RUN exit propagation
-        run: >-
-          hutch test
-          src/test-framework/auto-run-exit.test.ts
-          ../package/src/sdks/main/__tests__/utils-quit-exit-code.test.ts
+        if: ${{ !cancelled() }}
+        run: hutch test src/test-framework/auto-run-exit.test.ts
+        working-directory: kitchen
+
+      - name: Test Kitchen renderer requirements
+        if: ${{ !cancelled() }}
+        run: hutch test src/test-framework/requirements.test.ts
+        working-directory: kitchen
+
+      - name: Test Kitchen result summary
+        if: ${{ !cancelled() }}
+        run: hutch test src/test-runner/test-summary.test.ts
+        working-directory: kitchen
+
+      - name: Test Kitchen quit exit codes
+        if: ${{ !cancelled() }}
+        run: hutch test ../package/src/sdks/main/__tests__/utils-quit-exit-code.test.ts
         working-directory: kitchen
 
       - name: Test release toolchain provenance contract

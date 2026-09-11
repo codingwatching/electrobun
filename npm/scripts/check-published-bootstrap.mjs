@@ -151,6 +151,26 @@ export function compareSemver(leftValue, rightValue) {
 	return 0;
 }
 
+export function npmInvocation(
+	args,
+	platform = process.platform,
+	environment = process.env,
+) {
+	if (platform !== "win32") return { args, command: "npm" };
+	if (args.some((argument) => !/^[A-Za-z0-9@._:/=+?-]+$/.test(argument))) {
+		fail("Windows npm invocation received an unsafe command-string argument");
+	}
+	const systemRoot = environment.SystemRoot || "C:\\Windows";
+	const command =
+		environment.ComSpec ||
+		environment.COMSPEC ||
+		join(systemRoot, "System32", "cmd.exe");
+	return {
+		args: ["/d", "/s", "/c", ["npm.cmd", ...args].join(" ")],
+		command,
+	};
+}
+
 async function registryJson(fetchImpl, url, label, allowNotFound = false) {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -192,18 +212,14 @@ export function packBootstrapIntegrity(manifestPath) {
 	const packageRoot = dirname(resolve(manifestPath));
 	const temporary = mkdtempSync(join(tmpdir(), "electrobun-npm-pack-"));
 	try {
+		const npm = npmInvocation(["pack", "--json", "--ignore-scripts"]);
 		const output = execFileSync(
-			"npm",
-			[
-				"pack",
-				"--json",
-				"--ignore-scripts",
-				"--pack-destination",
-				temporary,
-			],
+			npm.command,
+			npm.args,
 			{
 				cwd: packageRoot,
 				encoding: "utf8",
+				env: { ...process.env, npm_config_pack_destination: temporary },
 				maxBuffer: 1024 * 1024,
 				stdio: ["ignore", "pipe", "pipe"],
 			},

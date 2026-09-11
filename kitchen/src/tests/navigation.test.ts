@@ -16,6 +16,7 @@ async function assertViewsUrlWithSuffixLoads(
   const win = await createWindow({
     url,
     rpc,
+    // Keep this explicit: system-only builds must exercise CEF-request fallback.
     renderer: "cef",
     title: "Views URL Suffix Test",
   });
@@ -43,7 +44,7 @@ async function assertViewsUrlWithSuffixLoads(
   expect(locationInfo?.hash).toBe(expectedHash);
   expect(locationInfo?.title).toBe("Test Harness");
   log(
-    `Loaded CEF views URL suffix; dom-ready=${domReadyFired}, href=${locationInfo?.href}`,
+    `Loaded views URL suffix; dom-ready=${domReadyFired}, href=${locationInfo?.href}`,
   );
 }
 
@@ -162,7 +163,7 @@ export const navigationTests = [
       const win = await createWindow({
         url: "views://test-harness/index.html",
         title: "Nav Rules Allowlist Test",
-        renderer: 'cef', // Use CEF renderer
+        renderer: 'cef', // Intentionally falls back in a system-only build.
       });
 
       // Wait for initial load
@@ -219,7 +220,7 @@ export const navigationTests = [
       const win = await createWindow({
         url: "views://test-harness/index.html",
         title: "Nav Rules Block Test",
-        renderer: 'cef', // Use CEF renderer
+        renderer: 'cef', // Intentionally falls back in a system-only build.
       });
 
       // Wait for initial load
@@ -367,7 +368,7 @@ export const navigationTests = [
       const win = await createWindow({
         url: "views://test-harness/index.html",
         title: "Did Commit Navigation Test",
-        renderer: "cef",
+        renderer: "cef", // Intentionally falls back in a system-only build.
       });
 
       win.webview.on("did-commit-navigation", (event: any) => {

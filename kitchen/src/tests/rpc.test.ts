@@ -182,7 +182,7 @@ export const rpcTests = [
 				await createWindow({
 					url: "views://test-oopif/index.html",
 					title: "Webview tag created event",
-					renderer: "cef",
+					renderer: "cef", // Intentionally exercises system fallback without CEF.
 				});
 
 				await domReady;
@@ -651,6 +651,9 @@ export const rpcTests = [
         45000,
       );
       expect(webviewRequestResult.received).toBe(requestCount);
+      if (webviewRequestResult.errorCount > 0) {
+        log(`Webview -> bun transition request errors: ${JSON.stringify(webviewRequestResult.errors)}`);
+      }
       expect(webviewRequestResult.errorCount).toBe(0);
       expect(webviewRequestResult.mismatchCount).toBe(0);
       log(`Completed ${webviewRequestResult.received} post-transition webview -> bun requests`);

@@ -2,6 +2,7 @@ import Electrobun, { Electroview } from "electrobun/view";
 import type { TestRunnerRPC, TestInfo, UpdateInfo, UpdateStatusEntry } from "./rpc";
 import type { TestResult, TestStatus } from "../test-framework/types";
 import { groupTestsForDisplay } from "./test-order";
+import { summarizeTestResults } from "./test-summary";
 
 // RPC setup
 const rpc = Electroview.defineRPC<TestRunnerRPC>({
@@ -57,6 +58,7 @@ let testList: HTMLElement;
 let totalCount: HTMLElement;
 let passedCount: HTMLElement;
 let failedCount: HTMLElement;
+let skippedCount: HTMLElement;
 let pendingCount: HTMLElement;
 let btnRunAll: HTMLButtonElement;
 let btnRunInteractive: HTMLButtonElement;
@@ -74,6 +76,7 @@ async function init() {
   totalCount = document.getElementById('total-count')!;
   passedCount = document.getElementById('passed-count')!;
   failedCount = document.getElementById('failed-count')!;
+  skippedCount = document.getElementById('skipped-count')!;
   pendingCount = document.getElementById('pending-count')!;
   btnRunAll = document.getElementById('btn-run-all')! as HTMLButtonElement;
   btnRunInteractive = document.getElementById('btn-run-interactive')! as HTMLButtonElement;
@@ -296,6 +299,14 @@ function renderTest(test: TestInfo): HTMLElement {
     errorEl.textContent = truncate(result.error, 40);
     metaEl.appendChild(errorEl);
   }
+  const skipReason = result?.status === 'skipped' ? result.logs?.[0] : undefined;
+  if (skipReason) {
+    const skipReasonEl = document.createElement('span');
+    skipReasonEl.className = 'test-skip-reason';
+    skipReasonEl.title = skipReason;
+    skipReasonEl.textContent = truncate(skipReason, 60);
+    metaEl.appendChild(skipReasonEl);
+  }
 
   const runButtonEl = document.createElement('button');
   runButtonEl.className = 'run-btn';
@@ -335,23 +346,23 @@ function updateTestStatus(testId: string, status: TestStatus, result?: TestResul
 
   const metaEl = testEl.querySelector('.test-meta');
   if (metaEl && result) {
+    const skipReason = result.status === 'skipped' ? result.logs?.[0] : undefined;
     metaEl.innerHTML = `
       ${result.duration ? `<span class="test-duration">${result.duration}ms</span>` : ''}
       ${result.error ? `<span class="test-error" title="${escapeHtml(result.error)}">${truncate(result.error, 40)}</span>` : ''}
+      ${skipReason ? `<span class="test-skip-reason" title="${escapeHtml(skipReason)}">${escapeHtml(truncate(skipReason, 60))}</span>` : ''}
     `;
   }
 }
 
 function updateSummary() {
-  const results = Array.from(testResults.values());
-  const passed = results.filter(r => r.status === 'passed').length;
-  const failed = results.filter(r => r.status === 'failed').length;
-  const pending = tests.length - results.length;
+  const summary = summarizeTestResults(tests.length, testResults.values());
 
-  totalCount.textContent = String(tests.length);
-  passedCount.textContent = String(passed);
-  failedCount.textContent = String(failed);
-  pendingCount.textContent = String(pending);
+  totalCount.textContent = String(summary.total);
+  passedCount.textContent = String(summary.passed);
+  failedCount.textContent = String(summary.failed);
+  skippedCount.textContent = String(summary.skipped);
+  pendingCount.textContent = String(summary.pending);
 }
 
 function onSearchInput() {

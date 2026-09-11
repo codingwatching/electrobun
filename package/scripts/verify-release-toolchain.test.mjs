@@ -162,6 +162,31 @@ test("release CI verifies provenance before all four Kitchen builds", () => {
 	]) {
 		assert.match(matrix, new RegExp(`^          - os: ${runner}$`, "m"));
 	}
+	assert.match(
+		workflow,
+		/^  build:\n    strategy:\n      fail-fast: false\n      matrix:/m,
+		"all release build platforms should finish their test jobs after another platform fails",
+	);
+	assert.match(
+		workflow,
+		/^      - name: Test npm bootstrap and release tooling\n        run: hutch test:npm-bootstrap\n        working-directory: package$/m,
+		"the portable npm bootstrap suite should run on every release build platform",
+	);
+	for (const [name, testFile] of [
+		["Test Kitchen AUTO_RUN exit propagation", "src/test-framework/auto-run-exit.test.ts"],
+		["Test Kitchen renderer requirements", "src/test-framework/requirements.test.ts"],
+		["Test Kitchen result summary", "src/test-runner/test-summary.test.ts"],
+		["Test Kitchen quit exit codes", "../package/src/sdks/main/__tests__/utils-quit-exit-code.test.ts"],
+	]) {
+		assert.match(
+			workflow,
+			new RegExp(
+				`^      - name: ${name}\\n        if: \\$\\{\\{ !cancelled\\(\\) \\}\\}\\n        run: hutch test ${testFile.replaceAll("/", "\\/").replaceAll(".", "\\.")}\\n        working-directory: kitchen$`,
+				"m",
+			),
+			`${testFile} should run independently on every release build platform`,
+		);
+	}
 
 	// The workflow env must mirror the canonical pragma pin, whatever it is.
 	const pins = parseHutchPragma(

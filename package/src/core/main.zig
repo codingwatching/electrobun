@@ -118,6 +118,13 @@ const websocket_magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const websocket_payload_limit: usize = 1024 * 1024 * 500;
 const websocket_port_range_start: u16 = 50000;
 const websocket_port_range_end: u16 = 65535;
+// Amortize runtime FFI and string decoding without allowing an unbounded batch.
+const host_message_batch_count_limit: usize = 256;
+const host_message_batch_raw_byte_limit: usize = 1024 * 1024;
+// A null pointer with length zero means the queue is empty. This sentinel lets
+// polling runtimes distinguish an actual error without decoding last_error on
+// every idle tick.
+const host_message_batch_error_length: u32 = std.math.maxInt(u32);
 
 const TrayState = struct {
     title: [:0]u8,
@@ -151,6 +158,11 @@ const WebviewRendererKind = enum {
 const PendingHostMessage = struct {
     webview_id: u32,
     message: [:0]u8,
+};
+
+const PendingHostMessageBatchEntry = struct {
+    webviewId: u32,
+    message: []const u8,
 };
 
 const PendingHostTransportSend = struct {
@@ -241,6 +253,7 @@ var webview_registry_mutex: std.Io.Mutex = .init;
 var wgpu_view_registry = std.AutoHashMap(u32, WgpuViewState).init(allocator);
 var wgpu_view_registry_mutex: std.Io.Mutex = .init;
 var pending_host_messages: std.ArrayList(PendingHostMessage) = .empty;
+var pending_host_messages_head: usize = 0;
 var pending_host_messages_mutex: std.Io.Mutex = .init;
 var pending_host_transport_sends: std.ArrayList(PendingHostTransportSend) = .empty;
 var pending_host_transport_sends_head: usize = 0;
@@ -449,6 +462,32 @@ fn hostBridgeQueueTrampoline(webview_id: u32, message: [*:0]const u8) callconv(.
     enqueuePendingHostMessage(webview_id, message);
 }
 
+fn compactPendingHostMessagesLocked() void {
+    if (pending_host_messages_head == 0) {
+        return;
+    }
+
+    const len = pending_host_messages.items.len;
+    if (pending_host_messages_head >= len) {
+        pending_host_messages.clearRetainingCapacity();
+        pending_host_messages_head = 0;
+        return;
+    }
+
+    if (pending_host_messages_head < 1024 and pending_host_messages_head * 2 < len) {
+        return;
+    }
+
+    const remaining = len - pending_host_messages_head;
+    std.mem.copyForwards(
+        PendingHostMessage,
+        pending_host_messages.items[0..remaining],
+        pending_host_messages.items[pending_host_messages_head..len],
+    );
+    pending_host_messages.shrinkRetainingCapacity(remaining);
+    pending_host_messages_head = 0;
+}
+
 fn dispatchRuntimePostMessage(
     handler: WebviewPostMessageHandler,
     webview_id: u32,
@@ -511,18 +550,101 @@ export fn popNextQueuedHostMessage(out_webview_id: *u32) ?[*:0]u8 {
     pending_host_messages_mutex.lockUncancelable(coreIo());
     defer pending_host_messages_mutex.unlock(coreIo());
 
-    if (pending_host_messages.items.len == 0) {
+    if (pending_host_messages_head >= pending_host_messages.items.len) {
         return null;
     }
 
-    const entry = pending_host_messages.orderedRemove(0);
-    if (pending_host_messages.items.len == 0) {
+    const entry = pending_host_messages.items[pending_host_messages_head];
+    pending_host_messages_head += 1;
+    const queue_is_empty = pending_host_messages_head >= pending_host_messages.items.len;
+    if (queue_is_empty) {
         host_message_wakeup_mutex.lockUncancelable(coreIo());
         drainHostMessageWakeupLocked();
         host_message_wakeup_mutex.unlock(coreIo());
     }
+    compactPendingHostMessagesLocked();
     out_webview_id.* = entry.webview_id;
     return entry.message.ptr;
+}
+
+export fn popQueuedHostMessageBatch(max_count: u32, out_length: *u32) ?[*:0]u8 {
+    clearLastError();
+    out_length.* = 0;
+
+    if (max_count == 0) {
+        return null;
+    }
+
+    pending_host_messages_mutex.lockUncancelable(coreIo());
+    defer pending_host_messages_mutex.unlock(coreIo());
+
+    const available = pending_host_messages.items.len - pending_host_messages_head;
+    if (available == 0) {
+        return null;
+    }
+
+    const count_limit = @min(
+        @min(@as(usize, max_count), host_message_batch_count_limit),
+        available,
+    );
+    var count: usize = 0;
+    var raw_bytes: usize = 0;
+    while (count < count_limit) : (count += 1) {
+        const message_len = pending_host_messages.items[pending_host_messages_head + count].message.len;
+        // Preserve the existing large-message behavior: the byte limit bounds
+        // aggregate work after the first entry, while one entry always makes
+        // progress even when it exceeds that limit on its own.
+        if (count > 0 and message_len > host_message_batch_raw_byte_limit - @min(raw_bytes, host_message_batch_raw_byte_limit)) {
+            break;
+        }
+        raw_bytes += message_len;
+    }
+
+    const entries = allocator.alloc(PendingHostMessageBatchEntry, count) catch |err| {
+        out_length.* = host_message_batch_error_length;
+        setLastError("Failed to allocate queued host message batch: {s}", .{@errorName(err)});
+        return null;
+    };
+    defer allocator.free(entries);
+    for (entries, 0..) |*batch_entry, index| {
+        const queued_entry = pending_host_messages.items[pending_host_messages_head + index];
+        batch_entry.* = .{
+            .webviewId = queued_entry.webview_id,
+            .message = queued_entry.message,
+        };
+    }
+
+    const batch_json = std.json.Stringify.valueAlloc(allocator, entries, .{}) catch |err| {
+        out_length.* = host_message_batch_error_length;
+        setLastError("Failed to serialize queued host message batch: {s}", .{@errorName(err)});
+        return null;
+    };
+    defer allocator.free(batch_json);
+    if (batch_json.len >= host_message_batch_error_length) {
+        out_length.* = host_message_batch_error_length;
+        setLastError("Queued host message batch exceeds the ABI length limit", .{});
+        return null;
+    }
+    const owned_batch_json = allocator.dupeZ(u8, batch_json) catch |err| {
+        out_length.* = host_message_batch_error_length;
+        setLastError("Failed to own queued host message batch: {s}", .{@errorName(err)});
+        return null;
+    };
+
+    for (pending_host_messages.items[pending_host_messages_head..][0..count]) |entry| {
+        allocator.free(entry.message);
+    }
+    pending_host_messages_head += count;
+    const queue_is_empty = pending_host_messages_head >= pending_host_messages.items.len;
+    if (queue_is_empty) {
+        host_message_wakeup_mutex.lockUncancelable(coreIo());
+        drainHostMessageWakeupLocked();
+        host_message_wakeup_mutex.unlock(coreIo());
+    }
+    compactPendingHostMessagesLocked();
+
+    out_length.* = @intCast(batch_json.len);
+    return owned_batch_json.ptr;
 }
 
 export fn freeCoreString(value: ?[*:0]u8) void {
@@ -540,7 +662,7 @@ export fn getHostTransportDebugJSON() ?[*:0]u8 {
     host_transport_debug_mutex.unlock(coreIo());
 
     pending_host_messages_mutex.lockUncancelable(coreIo());
-    const pending_count = pending_host_messages.items.len;
+    const pending_count = pending_host_messages.items.len - pending_host_messages_head;
     pending_host_messages_mutex.unlock(coreIo());
 
     pending_host_transport_sends_mutex.lockUncancelable(coreIo());

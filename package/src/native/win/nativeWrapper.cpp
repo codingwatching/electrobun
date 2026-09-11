@@ -3832,9 +3832,13 @@ public:
 
         // hostBridge/bunBridge aliases and internalBridge - RPC bridges (only for non-sandboxed webviews)
         if (!isSandboxed) {
-            // Create COM objects for the bridge handlers
-            bunBridgeHandler = ComPtr<BridgeHandler>(new BridgeHandler("bunBridge", bunBridgeCallbackHandler, webviewId));
-            internalBridgeHandler = ComPtr<BridgeHandler>(new BridgeHandler("internalBridge", internalBridgeCallbackHandler, webviewId));
+            // RPC bridges may carry thousands of packets in a burst. Synchronous
+            // per-packet console output blocks WebView2's UI thread and delays the
+            // packets behind it, so keep routine traffic quiet.
+            bunBridgeHandler = ComPtr<BridgeHandler>(new BridgeHandler(
+                "bunBridge", bunBridgeCallbackHandler, webviewId, true));
+            internalBridgeHandler = ComPtr<BridgeHandler>(new BridgeHandler(
+                "internalBridge", internalBridgeCallbackHandler, webviewId, true));
 
             // Convert COM objects to VARIANT for AddHostObjectToScript
             VARIANT bunBridgeVariant = {};

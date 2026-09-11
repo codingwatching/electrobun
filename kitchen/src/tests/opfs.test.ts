@@ -195,6 +195,9 @@ export const opfsTests = [
     category: "Session",
     description:
       "Verify sync-access OPFS, persist:default sharing, named persistent isolation, and ephemeral reset",
+    // Hard requirement: this is explicitly the CEF profile/request-context
+    // regression, unlike generic renderer:"cef" tests that exercise fallback.
+    requires: { renderer: "cef" },
     timeout: 90000,
     async run({ createWindow, log }) {
       if (process.platform !== "linux" && process.platform !== "win32") {
@@ -203,10 +206,6 @@ export const opfsTests = [
       }
 
       const buildConfig = BuildConfig.getSync();
-      if (!buildConfig.availableRenderers.includes("cef")) {
-        log("Skipping OPFS because this kitchen variant does not bundle CEF");
-        return;
-      }
 
       // Chromium does not grant OPFS to Electrobun's custom views:// scheme.
       // A loopback origin is potentially trustworthy and exercises the same

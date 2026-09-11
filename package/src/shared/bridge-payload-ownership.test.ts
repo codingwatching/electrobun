@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const sourceRoot = join(import.meta.dirname, "..");
-const read = (path: string) => readFileSync(join(sourceRoot, path), "utf8");
+const read = (path: string) =>
+	readFileSync(join(sourceRoot, path), "utf8").replaceAll("\r\n", "\n");
 
 function between(source: string, start: string, end: string): string {
 	const startIndex = source.indexOf(start);
@@ -22,6 +23,28 @@ describe("bridge callback payload ownership", () => {
 		expect(core).toContain("releaseRuntimeCallbackPayload");
 		expect(runtime).toContain("setRuntimeCallbacksAsync(true)");
 		expect(runtime).toContain("releaseRuntimeCallbackPayload(");
+	});
+
+	it("drains host messages across the runtime boundary in bounded batches", () => {
+		const core = read("core/main.zig");
+		const runtime = read("sdks/main/proc/native.ts");
+
+		expect(core).toContain("export fn popQueuedHostMessageBatch(");
+		expect(core).toContain("host_message_batch_count_limit: usize = 256");
+		expect(core).toContain(
+			"host_message_batch_raw_byte_limit: usize = 1024 * 1024",
+		);
+		expect(core).toContain(
+			"host_message_batch_error_length: u32 = std.math.maxInt(u32)",
+		);
+		expect(runtime).toContain("popQueuedHostMessageBatch(");
+		expect(runtime).toContain("HOST_MESSAGE_BATCHES_PER_TURN = 4");
+		expect(runtime).toContain(
+			"queuedHostMessageBatchLengthBuf[0] === HOST_MESSAGE_BATCH_ERROR_LENGTH",
+		);
+		expect(runtime).toMatch(
+			/new CString\(\s*messagePtr,\s*0,\s*queuedHostMessageBatchLengthBuf\[0\],?\s*\)/,
+		);
 	});
 
 	it("does not use timed bridge-buffer cleanup in native wrappers", () => {

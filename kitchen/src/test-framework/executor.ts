@@ -1,6 +1,6 @@
 // Test executor - runs tests in the bun context
 
-import { BrowserWindow } from "electrobun/main";
+import { BrowserWindow, BuildConfig } from "electrobun/main";
 import type {
   TestDefinition,
   TestResult,
@@ -9,6 +9,7 @@ import type {
   WindowOptions,
 } from "./types";
 import { ExclusiveRunCoordinator } from "./exclusive-run";
+import { getTestSkipReason } from "./requirements";
 
 type TestEventHandler = (event: TestEvent) => void;
 
@@ -82,7 +83,9 @@ export class TestExecutor {
           url: options.url || undefined,
           html: options.html || undefined,
           preload: options.preload || undefined,
-          renderer: options.renderer || 'cef', // Default to CEF, allow override
+          // Request CEF by default. When CEF is not bundled, BrowserWindow
+          // deliberately exercises Electrobun's system-webview fallback.
+          renderer: options.renderer ?? 'cef',
           hidden: options.hidden || false,
           activate: options.activate ?? true,
           frame: {
@@ -156,6 +159,24 @@ export class TestExecutor {
 
     console.log(`\n  Running: ${test.name}`);
     this.emit({ type: 'test-started', testId: test.id, name: test.name });
+
+    const skipReason = getTestSkipReason(
+      test,
+      BuildConfig.getSync().availableRenderers,
+    );
+    if (skipReason) {
+      const result: TestResult = {
+        testId: test.id,
+        name: test.name,
+        status: 'skipped',
+        duration: Date.now() - startTime,
+        logs: [skipReason],
+      };
+      this.results.set(test.id, result);
+      console.log(`  \x1b[33m- SKIPPED\x1b[0m: ${skipReason}`);
+      this.emit({ type: 'test-completed', testId: test.id, result });
+      return result;
+    }
 
     const context = this.createTestContext(test.id);
 
@@ -246,12 +267,19 @@ export class TestExecutor {
     // Summary
     const passed = results.filter(r => r.status === 'passed').length;
     const failed = results.filter(r => r.status === 'failed').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
 
     console.log(`\n${'='.repeat(60)}`);
     if (failed === 0) {
-      console.log(`\x1b[32mAll ${passed} automated tests passed!\x1b[0m`);
+      console.log(
+        `\x1b[32mAll ${passed} runnable automated tests passed!\x1b[0m` +
+          (skipped > 0 ? ` \x1b[33m${skipped} skipped\x1b[0m` : ''),
+      );
     } else {
-      console.log(`\x1b[31m${failed} failed\x1b[0m, \x1b[32m${passed} passed\x1b[0m`);
+      console.log(
+        `\x1b[31m${failed} failed\x1b[0m, \x1b[32m${passed} passed\x1b[0m` +
+          (skipped > 0 ? `, \x1b[33m${skipped} skipped\x1b[0m` : ''),
+      );
       console.log('\nFailed tests:');
       for (const result of results.filter(r => r.status === 'failed')) {
         console.log(`  - ${result.name}: ${result.error}`);
@@ -289,12 +317,13 @@ export class TestExecutor {
     return Array.from(this.results.values());
   }
 
-  getSummary(): { total: number; passed: number; failed: number; pending: number } {
+  getSummary(): { total: number; passed: number; failed: number; skipped: number; pending: number } {
     const results = this.getResults();
     return {
       total: this.tests.length,
       passed: results.filter(r => r.status === 'passed').length,
       failed: results.filter(r => r.status === 'failed').length,
+      skipped: results.filter(r => r.status === 'skipped').length,
       pending: this.tests.length - results.length,
     };
   }

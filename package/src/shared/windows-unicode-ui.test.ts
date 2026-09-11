@@ -100,6 +100,15 @@ describe("Windows Unicode native UI source contract", () => {
 });
 
 describe("Windows RPC Unicode transport source contract", () => {
+	test("keeps high-volume RPC host-object bridges quiet", () => {
+		expect(nativeWrapper).toMatch(
+			/new BridgeHandler\(\s*"bunBridge",\s*bunBridgeCallbackHandler,\s*webviewId,\s*true\s*\)/,
+		);
+		expect(nativeWrapper).toMatch(
+			/new BridgeHandler\(\s*"internalBridge",\s*internalBridgeCallbackHandler,\s*webviewId,\s*true\s*\)/,
+		);
+	});
+
 	test("strictly converts every user-controlled WebView2 string", () => {
 		for (const conversion of [
 			"electrobun::utf8ToWide(suggestedStr, suggestedNameW)",

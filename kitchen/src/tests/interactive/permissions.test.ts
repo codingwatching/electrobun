@@ -13,7 +13,7 @@
 // actually testable in this build.
 
 import { defineTest } from "../../test-framework/types";
-import { BrowserWindow, BuildConfig } from "electrobun/main";
+import { BrowserWindow } from "electrobun/main";
 
 const PERMISSION_PAGE_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -232,6 +232,9 @@ function createPermissionTest(renderer: "cef" | "native") {
     name: `Permission prompt - ${rendererLabel}`,
     category: "Permissions (Interactive)",
     description: `Verify the native permission dialog names the specific permission being requested. Exercises the ${rendererLabel} permission delegate path.`,
+    // The CEF-labelled variant explicitly tests the CEF permission delegate;
+    // this preserves its pre-existing no-CEF availability gate.
+    requires: renderer === "cef" ? { renderer: "cef" } : undefined,
     instructions: [
       `A page will open in a ${rendererLabel} window with permission-requesting buttons grouped by API family.`,
       "Buttons whose API is unavailable in this renderer are disabled — only enabled buttons can trigger a prompt.",
@@ -269,13 +272,7 @@ function createPermissionTest(renderer: "cef" | "native") {
   });
 }
 
-const bundledPermissionTests = [
+export const permissionTests = [
   createPermissionTest("cef"),
   createPermissionTest("native"),
 ];
-
-// Do not label a system-webview fallback as CEF when the bundle does not
-// contain CEF. Define both first so later test IDs stay stable across variants.
-export const permissionTests = BuildConfig.getSync().availableRenderers.includes("cef")
-  ? bundledPermissionTests
-  : bundledPermissionTests.slice(1);

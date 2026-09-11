@@ -12,8 +12,7 @@ export default {
 		dev: ["hutch", "scripts/dev.ts"],
 		"dev:template": ["hutch", "scripts/dev-template.ts"],
 		"dev:matrix": ["hutch", "scripts/dev-matrix.ts"],
-		"dev:test":
-			"hutch scripts/dev.test.ts && hutch scripts/dev-template.test.ts && node --test scripts/clean-template-artifacts.test.mjs",
+		"dev:test": ["hutch", "scripts/check-release.ts", "dev"],
 		"test:vm": ["hutch", "scripts/test-vm.ts"],
 		"clean:templates": ["node", "scripts/clean-template-artifacts.mjs"],
 		"preview:installer-ui": "node scripts/preview-installer-ui.mjs",
@@ -25,7 +24,7 @@ export default {
 		"build:docs:release": "cd ../docs && hutch run build",
 		typecheck:
 			"hutch src/preload/build.ts && node node_modules/typescript/bin/tsc --noEmit",
-		"check:release": "hutch clean:templates && hutch typecheck && hutch dev:test && hutch test:native-symbol-contract && hutch test:devkit-manifest && hutch test:version-bump && hutch test:templates && hutch test:odin-templates && hutch test:template-publisher && hutch test:signing && hutch test:deployment-target && hutch test:linux-abi && hutch test:installer-ui && hutch test:updater-unit && hutch test:npm-bootstrap && hutch test:release-notes",
+		"check:release": ["hutch", "scripts/check-release.ts"],
 		"pin:latest":
 			"hutch self update && cd .. && hutch self pin --recursive && hutch cottontail pin --recursive && node package/scripts/sync-release-toolchain-pins.mjs",
 		"push:beta": "hutch check:release && node scripts/push-version.js beta",
@@ -62,7 +61,7 @@ export default {
 			"scripts/test-webview2-permissions.ts",
 		],
 		"test:macos-inspector-layout": "scripts/test-macos-inspector-layout.sh",
-		"test:templates": "node scripts/run-cottontail-test.js ../templates/template-manifests.test.ts ../templates/all-template-orchestrator.test.ts src/shared/ui-color-picker.test.ts && node --test ../templates/vite-devkit-resolution.test.mjs",
+		"test:templates": ["hutch", "scripts/check-release.ts", "templates"],
 		"test:odin-templates": "node scripts/test-odin-templates.mjs",
 		"test:template-publisher": "node --test ../scripts/publish-templates.test.mjs",
 		"test:signing": "node scripts/run-cottontail-test.js scripts/verify-macho-code-signing.test.ts",

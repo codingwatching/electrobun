@@ -269,6 +269,7 @@ header {
 .summary .total { color: #aaa; }
 .summary .passed { color: #4ade80; }
 .summary .failed { color: #f87171; }
+.summary .skipped { color: #c4b5fd; }
 .summary .pending { color: #fbbf24; }
 
 .controls {
@@ -428,6 +429,11 @@ header {
   color: #fca5a5;
 }
 
+.test-status.skipped {
+  background: #4c1d95;
+  color: #c4b5fd;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -485,6 +491,14 @@ header {
 .test-error {
   color: #f87171;
   max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.test-skip-reason {
+  color: #c4b5fd;
+  max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

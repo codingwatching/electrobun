@@ -17,9 +17,21 @@ export interface TestDefinition {
   category: string;
   description?: string;
   instructions?: string[];
+  requires?: TestRequirements;
   interactive: boolean;
   timeout?: number;
   run: (context: TestContext) => Promise<void>;
+}
+
+export type WindowRenderer = 'cef' | 'native';
+
+export interface TestRequirements {
+  /**
+   * A hard runtime prerequisite proven by the test's stated purpose/assertions.
+   * Never infer this from WindowOptions.renderer: Kitchen deliberately requests
+   * "cef" in renderer-neutral tests so no-CEF builds exercise system fallback.
+   */
+  renderer?: WindowRenderer;
 }
 
 export interface TestSuiteDefinition {
@@ -51,7 +63,12 @@ export interface WindowOptions {
   title?: string;
   titleBarStyle?: TitleBarStyle;
   trafficLightOffset?: { x: number; y: number };
-  renderer?: 'cef' | 'native';
+  /**
+   * Requested renderer, not a requirement. A "cef" request intentionally falls
+   * back to the system webview when CEF is not bundled; that path is critical
+   * Kitchen coverage and must not be converted into TestRequirements.renderer.
+   */
+  renderer?: WindowRenderer;
   hidden?: boolean;
   activate?: boolean;
   sandbox?: boolean; // When true, disables RPC and only allows event emission
@@ -188,6 +205,7 @@ export function defineTest(config: {
   category: string;
   description?: string;
   instructions?: string[];
+  requires?: TestRequirements;
   interactive?: boolean;
   timeout?: number;
   run: (context: TestContext) => Promise<void>;
@@ -198,6 +216,7 @@ export function defineTest(config: {
     category: config.category,
     description: config.description,
     instructions: config.instructions,
+    requires: config.requires,
     interactive: config.interactive ?? false,
     timeout: config.timeout ?? 10000,
     run: config.run,
@@ -212,6 +231,7 @@ export function defineTestSuite(config: TestSuiteDefinition): TestDefinition[] {
     category: config.category,
     description: test.description,
     instructions: test.instructions,
+    requires: test.requires,
     interactive: test.interactive,
     timeout: test.timeout ?? 10000,
     run: test.run,

@@ -26,6 +26,8 @@ export function createVmTestCommands({
 		{
 			label: "Kitchen automated tests (Cottontail + system webview)",
 			command: hutchBinary,
+			// Keep the explicit system-only matrix entry: plain `hutch dev`
+			// bundles CEF and would not exercise CEF-request fallback.
 			args: ["dev:matrix", "--with=cottontail:system"],
 			cwd: packageDir,
 			env: { AUTO_RUN: "1" },

@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, parse, resolve } from "node:path";
+import { basename, dirname, join, parse, resolve } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -380,6 +380,62 @@ test("offline warm-cache validation rejects modified Hutch bytes", async () => {
 	}
 });
 
+test("Unix target caches honor declared modes on hosts without POSIX modes", () => {
+	const temporary = mkdtempSync(join(tmpdir(), "electrobun-npm-hutch-host-mode-"));
+	const root = join(temporary, "cache");
+	try {
+		const binary = writeCachedHutch(root);
+		const engine = join(root, "bin", "hutch-engine");
+		const cacheManifest = join(root, resolver.CACHE_MANIFEST_FILENAME);
+		chmodSync(binary, 0o666);
+		chmodSync(engine, 0o666);
+		chmodSync(cacheManifest, 0o666);
+
+		assert.equal(
+			resolver.validateCachedHutch(
+				root,
+				"linux-x64",
+				"linux",
+				resolver.PAIRED_HUTCH_VERSION,
+				true,
+				"win32",
+			),
+			binary,
+		);
+		assert.equal(
+			resolver.validateCachedHutch(
+				root,
+				"linux-x64",
+				"linux",
+				resolver.PAIRED_HUTCH_VERSION,
+				true,
+				"linux",
+			),
+			null,
+		);
+
+		const cache = JSON.parse(readFileSync(cacheManifest, "utf8"));
+		for (const mode of [0o777, 0o644]) {
+			cache.files["bin/hutch"].mode = mode;
+			writeFileSync(cacheManifest, `${JSON.stringify(cache)}\n`);
+			assert.equal(
+				resolver.validateCachedHutch(
+					root,
+					"linux-x64",
+					"linux",
+					resolver.PAIRED_HUTCH_VERSION,
+					true,
+					"win32",
+				),
+				null,
+				`declared mode ${mode.toString(8)} must not validate`,
+			);
+		}
+	} finally {
+		rmSync(temporary, { recursive: true, force: true });
+	}
+});
+
 test(
 	"fresh extraction normalizes and seals both Hutch executable modes",
 	{ skip: process.platform === "win32" },
@@ -533,32 +589,28 @@ test("rejects unsafe archive paths before extraction", () => {
 	}
 });
 
-test("uses the Windows system tar for archive validation", () => {
+test("uses the Windows system tar for a Linux archive on a Windows host", () => {
 	const temporary = mkdtempSync(join(tmpdir(), "electrobun-npm-hutch-win-tar-"));
 	const commands = [];
 	try {
-		assert.throws(
-			() =>
-				resolver.installDownloadedArchive({
-					archive: Buffer.from("not-a-real-archive"),
-					environment: { SystemRoot: "C:\\Windows" },
-					execute: (command, args) => {
-						commands.push(command);
-						if (args[0] === "-tzf") return "../escaped\n";
-						if (args[0] === "-tvzf") {
-							return "-rw-r--r-- user group 1 date ../escaped\n";
-						}
-					},
-					platform: "win32",
-					platformKey: "windows-x64",
-					root: join(temporary, "cache"),
-				}),
-			/unsafe path/,
+		const binary = resolver.installDownloadedArchive({
+			archive: makeArchive(temporary, "linux-x64", "linux"),
+			environment: { SystemRoot: "C:\\Windows" },
+			execute: (command, args, options) => {
+				commands.push(command);
+				return execFileSync("tar", args, options);
+			},
+			hostPlatform: "win32",
+			platform: "linux",
+			platformKey: "linux-x64",
+			root: join(temporary, "cache"),
+		});
+		assert.equal(readFileSync(binary, "utf8"), "downloaded");
+		assert.equal(commands.length, 6);
+		assert.equal(
+			commands.every((command) => command === "C:\\Windows\\System32\\tar.exe"),
+			true,
 		);
-		assert.deepEqual(commands, [
-			"C:\\Windows\\System32\\tar.exe",
-			"C:\\Windows\\System32\\tar.exe",
-		]);
 	} finally {
 		rmSync(temporary, { recursive: true, force: true });
 	}
@@ -752,7 +804,7 @@ test("revalidates under the cache lock and never quarantines a raced valid cache
 			archive,
 			environment: {},
 			makeLockDirectory: (claim) => {
-				assert.match(claim, new RegExp(`${root}\\.install-lock\\.claim-`));
+				assert.equal(claim.startsWith(`${root}.install-lock.claim-`), true);
 				mkdirSync(claim);
 			},
 			platform: "linux",
@@ -865,7 +917,7 @@ test("a delayed stale-lock reclaimer cannot move a replacement live owner", () =
 					platform: "linux",
 					platformKey: "linux-x64",
 					rename: (source, destination) => {
-						if (!injectedWinner && destination.endsWith("/stale-lock")) {
+						if (!injectedWinner && basename(destination) === "stale-lock") {
 							injectedWinner = true;
 							renameSync(source, destination);
 							writeCacheLockOwner(lockPath, {
@@ -915,7 +967,7 @@ test("transient reclaim EPERM backs off and respects the lock deadline", () => {
 					platform: "linux",
 					platformKey: "linux-x64",
 					rename: (source, destination) => {
-						if (source === lockPath && destination.endsWith("/stale-lock")) {
+						if (source === lockPath && basename(destination) === "stale-lock") {
 							reclaimAttempts += 1;
 							const error = new Error("simulated antivirus contention");
 							error.code = "EPERM";
@@ -1302,7 +1354,12 @@ test("global and explicit fallbacks must prove they select the paired Hutch", as
 test("init installs a compatible global Hutch but runs the exact cached copy", async () => {
 	const temporary = mkdtempSync(join(tmpdir(), "electrobun-npm-init-"));
 	const environment = { HUTCH_HOME: join(temporary, "home") };
-	const global = join(environment.HUTCH_HOME, "bin", "hutch");
+	const global = resolver.globalHutchBinaryPath(
+		"production",
+		environment,
+		"linux",
+		temporary,
+	);
 	const cacheRoot = join(temporary, "cache");
 	const cached = writeCachedHutch(cacheRoot);
 	let globalInstalled = false;
@@ -1456,7 +1513,10 @@ test("the cold offline executable performs no HTTPS request", () => {
 			},
 		);
 		assert.equal(result.status, 1, result.stderr || result.stdout);
-		assert.match(result.stderr, /npm cache.*DASH_RELEASE_OFFLINE/);
+		const offlineReason = resolver.hutchPlatformKey(process.platform, process.arch)
+			? /npm cache.*DASH_RELEASE_OFFLINE/
+			: /platform is unsupported.*DASH_RELEASE_OFFLINE/;
+		assert.match(result.stderr, offlineReason);
 		assert.equal(existsSync(networkSentinel), false);
 	} finally {
 		rmSync(temporary, { recursive: true, force: true });

@@ -420,9 +420,10 @@ function validateArchiveEntries(
 	environment,
 	execute = execFileSync,
 	expectedHutchVersion = PAIRED_HUTCH_VERSION,
+	hostPlatform = process.platform,
 	tarExecutable,
 ) {
-	const tar = tarExecutable ?? tarCommand(platform, environment);
+	const tar = tarExecutable ?? tarCommand(hostPlatform, environment);
 	const archiveDirectory = path.dirname(archivePath);
 	const archiveFilename = path.basename(archivePath);
 	// Windows bsdtar can corrupt non-ACP absolute argv paths. Node passes cwd
@@ -539,7 +540,9 @@ function writeCacheManifest(
 	platform,
 	expectedHutchVersion,
 	archive,
+	hostPlatform = process.platform,
 ) {
+	const hostSupportsPosixModes = hostPlatform !== "win32";
 	const files = {};
 	for (const [relative, maximum] of cacheMemberLimits(platform)) {
 		const file = path.join(root, ...relative.split("/"));
@@ -551,7 +554,7 @@ function writeCacheManifest(
 			size: stat.size,
 			sha256: sha256File(file),
 			...(platform !== "win32" && relative.startsWith("bin/")
-				? { mode: stat.mode & 0o777 }
+				? { mode: hostSupportsPosixModes ? stat.mode & 0o777 : 0o755 }
 				: {}),
 		};
 	}
@@ -575,8 +578,10 @@ function validateCachedHutch(
 	platform,
 	expectedHutchVersion = PAIRED_HUTCH_VERSION,
 	requireCacheManifest = true,
+	hostPlatform = process.platform,
 ) {
 	try {
+		const hostSupportsPosixModes = hostPlatform !== "win32";
 		const members = cacheMemberLimits(platform);
 		const memberPaths = new Map(
 			[...members.keys()].map((relative) => [
@@ -610,7 +615,7 @@ function validateCachedHutch(
 		}
 		if (!requireCacheManifest) return binary;
 
-		if (platform !== "win32") {
+		if (platform !== "win32" && hostSupportsPosixModes) {
 			for (const executable of [binary, engine]) {
 				try {
 					accessSync(executable, fsConstants.X_OK);
@@ -625,7 +630,7 @@ function validateCachedHutch(
 			!manifestStat.isFile() ||
 			manifestStat.size < 1 ||
 			manifestStat.size > maxReleaseMetadataBytes ||
-				(platform !== "win32" && (manifestStat.mode & 0o022) !== 0)
+				(hostSupportsPosixModes && (manifestStat.mode & 0o022) !== 0)
 		) {
 			return null;
 		}
@@ -665,8 +670,10 @@ function validateCachedHutch(
 				(Number.isSafeInteger(descriptor.mode) &&
 					descriptor.mode >= 0 &&
 					descriptor.mode <= 0o777 &&
+					(descriptor.mode & 0o100) !== 0 &&
 					(descriptor.mode & 0o022) === 0 &&
-					(stat.mode & 0o777) === descriptor.mode);
+					(!hostSupportsPosixModes ||
+						(stat.mode & 0o777) === descriptor.mode));
 			if (
 				descriptor.size !== stat.size ||
 				!/^[0-9a-f]{64}$/.test(descriptor.sha256) ||
@@ -682,8 +689,8 @@ function validateCachedHutch(
 	}
 }
 
-function tarCommand(platform, environment) {
-	return platform === "win32"
+function tarCommand(hostPlatform, environment) {
+	return hostPlatform === "win32"
 		? path.win32.join(environment.SystemRoot || "C:\\Windows", "System32", "tar.exe")
 		: "tar";
 }
@@ -958,6 +965,7 @@ function installDownloadedArchive({
 	environment,
 	execute = execFileSync,
 	expectedHutchVersion = PAIRED_HUTCH_VERSION,
+	hostPlatform = process.platform,
 	makeLockDirectory = mkdirSync,
 	platform,
 	platformKey,
@@ -980,9 +988,10 @@ function installDownloadedArchive({
 			environment,
 			execute,
 			expectedHutchVersion,
+			hostPlatform,
 			tarExecutable,
 		);
-		execute(tarExecutable ?? tarCommand(platform, environment), ["-xzf", "hutch.tar.gz"], {
+		execute(tarExecutable ?? tarCommand(hostPlatform, environment), ["-xzf", "hutch.tar.gz"], {
 			cwd: temporary,
 			stdio: "pipe",
 		});
@@ -993,9 +1002,10 @@ function installDownloadedArchive({
 			platform,
 			expectedHutchVersion,
 			false,
+			hostPlatform,
 		);
 		if (!binary) throw new Error("extracted Hutch archive identity is invalid");
-		if (platform !== "win32") {
+		if (platform !== "win32" && hostPlatform !== "win32") {
 			chmodSync(binary, 0o755);
 			chmodSync(hutchEngineInRoot(extracted, platform), 0o755);
 		}
@@ -1005,12 +1015,15 @@ function installDownloadedArchive({
 			platform,
 			expectedHutchVersion,
 			archive,
+			hostPlatform,
 		);
 		binary = validateCachedHutch(
 			extracted,
 			platformKey,
 			platform,
 			expectedHutchVersion,
+			true,
+			hostPlatform,
 		);
 		if (!binary) throw new Error("sealed Hutch cache is invalid");
 
@@ -1033,6 +1046,8 @@ function installDownloadedArchive({
 				platformKey,
 				platform,
 				expectedHutchVersion,
+				true,
+				hostPlatform,
 			);
 			if (existing) return existing;
 
@@ -1044,6 +1059,8 @@ function installDownloadedArchive({
 					platformKey,
 					platform,
 					expectedHutchVersion,
+					true,
+					hostPlatform,
 				);
 				if (beforeQuarantine) return beforeQuarantine;
 				const invalidQuarantine = `${root}.invalid-${process.pid}-${randomBytes(8).toString("hex")}`;
@@ -1053,6 +1070,8 @@ function installDownloadedArchive({
 						platformKey,
 						platform,
 						expectedHutchVersion,
+						true,
+						hostPlatform,
 					);
 					if (validNow) return validNow;
 					try {
@@ -1065,6 +1084,8 @@ function installDownloadedArchive({
 							platformKey,
 							platform,
 							expectedHutchVersion,
+							true,
+							hostPlatform,
 						);
 						if (recovered) return recovered;
 						if (error.code === "ENOENT" && !pathEntryExists(root)) break;
@@ -1092,6 +1113,8 @@ function installDownloadedArchive({
 						platformKey,
 						platform,
 						expectedHutchVersion,
+						true,
+						hostPlatform,
 					);
 					if (raced) break;
 					if (
@@ -1121,6 +1144,8 @@ function installDownloadedArchive({
 				platformKey,
 				platform,
 				expectedHutchVersion,
+				true,
+				hostPlatform,
 			);
 			if (!installed) throw new Error("installed Hutch cache is invalid");
 			// From this point the cache is a complete immutable unit. Other resolver
@@ -1235,6 +1260,7 @@ async function resolveHutchBinary(options = {}) {
 	const environment = options.environment ?? process.env;
 	const platform = options.platform ?? process.platform;
 	const arch = options.arch ?? process.arch;
+	const hostPlatform = options.hostPlatform ?? process.platform;
 	const userHome = options.userHome ?? homedir();
 	const fileExists = options.existsSync ?? existsSync;
 	const install = options.installHutch ?? installHutch;
@@ -1243,6 +1269,7 @@ async function resolveHutchBinary(options = {}) {
 		...options,
 		environment,
 		fileExists,
+		hostPlatform,
 		install,
 		platform,
 		userHome,
@@ -1267,7 +1294,14 @@ async function resolveHutchBinary(options = {}) {
 		const root =
 			options.cacheRoot ??
 			downloadedHutchRoot(environment, platform, userHome, platformKey);
-		const cached = validateCachedHutch(root, platformKey, platform);
+		const cached = validateCachedHutch(
+			root,
+			platformKey,
+			platform,
+			PAIRED_HUTCH_VERSION,
+			true,
+			hostPlatform,
+		);
 		if (cached) return cached;
 
 		if (!environmentFlagEnabled(environment, "DASH_RELEASE_OFFLINE")) {

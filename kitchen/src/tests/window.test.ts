@@ -834,6 +834,9 @@ export const windowTests = [
     name: "Window setSize",
     category: "BrowserWindow",
     description: "Test programmatically resizing a window and its CEF viewport",
+    // Hard requirement: the assertion below specifically covers CEF's viewport
+    // WasResized path. Separate tests cover the system renderer's viewport.
+    requires: { renderer: "cef" },
     async run({ createWindow, log }) {
       const rpc = createTestHarnessRPC();
       const win = await createWindow({
@@ -844,7 +847,7 @@ export const windowTests = [
         y: 100,
         width: 400,
         height: 300,
-        renderer: 'cef',
+        renderer: "cef", // This assertion covers the CEF viewport, not renderer fallback.
       });
 
       await new Promise((resolve) => setTimeout(resolve, 1000));

@@ -452,6 +452,10 @@ const core = (() => {
 				args: [FFIType.ptr],
 				returns: FFIType.ptr,
 			},
+			popQueuedHostMessageBatch: {
+				args: [FFIType.u32, FFIType.ptr],
+				returns: FFIType.ptr,
+			},
 			getHostMessageWakeupReadFD: {
 				args: [],
 				returns: FFIType.int,
@@ -1313,7 +1317,16 @@ function getWindowsNativeWrapperSymbols(): Partial<WindowsNativeWrapperSymbols> 
 }
 
 core?.symbols.setRuntimeCallbacksAsync(true);
-const queuedHostMessageWebviewIdBuf = new Uint32Array(1);
+
+type QueuedHostMessageBatchEntry = {
+	webviewId: number;
+	message: string;
+};
+
+const HOST_MESSAGE_BATCH_SIZE = 256;
+const HOST_MESSAGE_BATCHES_PER_TURN = 4;
+const HOST_MESSAGE_BATCH_ERROR_LENGTH = 0xffff_ffff;
+const queuedHostMessageBatchLengthBuf = new Uint32Array(1);
 
 const readOwnedRuntimeCallbackPayload = (messagePointer: Pointer): string => {
 	try {
@@ -1323,39 +1336,73 @@ const readOwnedRuntimeCallbackPayload = (messagePointer: Pointer): string => {
 	}
 };
 
+let scheduledHostMessageDrain: ReturnType<typeof setTimeout> | undefined;
+
+const scheduleHostMessageDrain = (delay: number) => {
+	if (scheduledHostMessageDrain !== undefined) {
+		return;
+	}
+
+	scheduledHostMessageDrain = setTimeout(() => {
+		scheduledHostMessageDrain = undefined;
+		drainQueuedHostMessages();
+	}, delay);
+};
+
 const drainQueuedHostMessages = () => {
 	if (!core) {
 		return;
 	}
 
-	for (;;) {
-		let rawMessage = "";
-		let webviewId = 0;
-		const messagePtr = core_.symbols.popNextQueuedHostMessage(
-			ptr(queuedHostMessageWebviewIdBuf),
+	for (let batchIndex = 0; batchIndex < HOST_MESSAGE_BATCHES_PER_TURN; batchIndex++) {
+		// One bounded crossing avoids paying FFI and CString costs per packet.
+		const messagePtr = core_.symbols.popQueuedHostMessageBatch(
+			HOST_MESSAGE_BATCH_SIZE,
+			ptr(queuedHostMessageBatchLengthBuf),
 		) as Pointer | null;
 
 		if (!messagePtr) {
+			// Empty queues are the normal polling case. Only cross the FFI CString
+			// boundary for the explicit error sentinel returned by the core.
+			if (queuedHostMessageBatchLengthBuf[0] === HOST_MESSAGE_BATCH_ERROR_LENGTH) {
+				console.error(
+					"failed to pop queued host message batch:",
+					getCoreLastError() ?? "unknown core error",
+				);
+				scheduleHostMessageDrain(16);
+			}
 			return;
 		}
 
 		try {
-			webviewId = queuedHostMessageWebviewIdBuf[0]!;
-			rawMessage = new CString(messagePtr).toString();
-			if (!rawMessage) {
-				continue;
-			}
+			const entries = JSON.parse(
+				new CString(
+					messagePtr,
+					0,
+					queuedHostMessageBatchLengthBuf[0],
+				).toString(),
+			) as QueuedHostMessageBatchEntry[];
+			for (const { webviewId, message } of entries) {
+				try {
+					const webview = BrowserView.ensureWrapped(webviewId);
+					if (!webview) {
+						continue;
+					}
 
-			const webview = BrowserView.ensureWrapped(webviewId);
-			if (!webview) {
-				continue;
+					webview.rpcHandler?.(JSON.parse(message));
+				} catch (err) {
+					console.error("error draining queued host message:", {
+						webviewId,
+						messagePreview: message.slice(0, 500),
+						error:
+							err instanceof Error
+								? { name: err.name, message: err.message, stack: err.stack }
+								: err,
+					});
+				}
 			}
-
-			webview.rpcHandler?.(JSON.parse(rawMessage));
 		} catch (err) {
-			console.error("error draining queued host message:", {
-				webviewId,
-				messagePreview: rawMessage.slice(0, 500),
+			console.error("error decoding queued host message batch:", {
 				error:
 					err instanceof Error
 						? { name: err.name, message: err.message, stack: err.stack }
@@ -1365,6 +1412,10 @@ const drainQueuedHostMessages = () => {
 			core_.symbols.freeCoreString(messagePtr);
 		}
 	}
+
+	// Yield after bounded work. The Unix wakeup remains signaled until the queue
+	// is empty, so a continuation is required rather than waiting for a new edge.
+	scheduleHostMessageDrain(0);
 };
 
 let hostMessagePollingStarted = false;

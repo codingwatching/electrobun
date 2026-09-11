@@ -70,7 +70,8 @@ function createWgpuTagTest(name: string, transparent: boolean) {
         winRef = new BrowserWindow({
           title: transparent ? "Transparent WGPU Tag" : "WGPU Tag Playground",
           url: "views://playgrounds/wgpu-tag/index.html",
-          // CEF hosts the page; <electrobun-wgpu> remains a native overlay.
+          // Request CEF for the host page; system-only builds exercise the
+          // normal webview fallback. <electrobun-wgpu> is a native overlay.
           renderer: "cef",
           frame: { width: 860, height: 720, x: 120, y: 60 },
           transparent,

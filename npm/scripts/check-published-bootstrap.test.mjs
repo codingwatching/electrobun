@@ -7,6 +7,7 @@ import test from "node:test";
 import {
 	checkPublishedBootstrap,
 	compareSemver,
+	npmInvocation,
 	packBootstrapIntegrity,
 } from "./check-published-bootstrap.mjs";
 
@@ -221,6 +222,27 @@ test("SemVer precedence handles prereleases for monotonic tags", () => {
 	]) {
 		assert.equal(compareSemver(left, right), expected, `${left} vs ${right}`);
 	}
+});
+
+test("invokes the Windows npm.cmd shim without shell:true or path interpolation", () => {
+	const args = ["pack", "--json", "--ignore-scripts"];
+	assert.deepEqual(npmInvocation(args, "linux", {}), {
+		args,
+		command: "npm",
+	});
+	assert.deepEqual(
+		npmInvocation(args, "win32", {
+			ComSpec: "C:\\Windows\\System32\\cmd.exe",
+		}),
+		{
+			args: ["/d", "/s", "/c", ["npm.cmd", ...args].join(" ")],
+			command: "C:\\Windows\\System32\\cmd.exe",
+		},
+	);
+	assert.throws(
+		() => npmInvocation(["pack", "value & whoami"], "win32", {}),
+		/unsafe command-string argument/,
+	);
 });
 
 test("npm pack produces a deterministic local integrity", () => {

@@ -162,7 +162,6 @@ function validateArchiveLayout(bytes, platform, hutchVersion) {
 			platform: runtimePlatforms[platform],
 			platformKey: platform,
 			root: join(temporary, "cache"),
-			tarExecutable: "tar",
 		});
 	} catch (error) {
 		fail(`${platform} archive layout or metadata is invalid: ${error.message}`);
