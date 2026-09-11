@@ -41,6 +41,7 @@ export default {
 		"test:wayland-screen-capture-frame-native":
 			"hutch scripts/test-wayland-screen-capture-frame-native.js",
 		"test:views-url-native": "hutch scripts/test-views-url-native.js",
+		"test:core-host-transport": "node --test scripts/core-host-transport.test.mjs",
 		"test:windows-ui-native": "hutch scripts/test-windows-ui-native.js",
 		"test:windows-ui-native-integration":
 			"hutch scripts/test-windows-ui-native.js --require-native-wrapper",

@@ -1280,7 +1280,10 @@ fn startHostTransportServer(requested_port: u32) bool {
             return false;
         };
 
-        var server = address.listen(coreIo(), .{ .reuse_address = true }) catch |err| switch (err) {
+        // Each process owns its webview IDs and encryption keys. Zig's
+        // reuse_address also enables SO_REUSEPORT, which would let another
+        // instance accept this process's encrypted RPC connections.
+        var server = address.listen(coreIo(), .{ .reuse_address = false }) catch |err| switch (err) {
             error.AddressInUse => {
                 if (current_port == port_limit) {
                     break;
