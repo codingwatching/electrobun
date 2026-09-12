@@ -50,7 +50,7 @@ export default {
 		"test:native-symbol-contract":
 			"node scripts/run-cottontail-test.js src/shared/native-symbol-contract.test.ts",
 		"test:devkit-manifest":
-			"node --test scripts/validate-native-devkit.test.mjs scripts/electrobun-version-runtime.test.mjs",
+			"node scripts/run-cottontail-test.js src/shared/native-devkit-manifest.test.ts && node --test scripts/validate-native-devkit.test.mjs scripts/electrobun-version-runtime.test.mjs",
 		"test:version-bump":
 			"node --test scripts/version-config.test.mjs scripts/release-git.test.mjs scripts/verify-release-version.test.mjs scripts/create-artifact-index.test.mjs scripts/verify-release-assets.test.mjs scripts/release-publication-contract.test.mjs scripts/sync-release-toolchain-pins.test.mjs",
 		"test:linux-native-dialog":
