@@ -2,6 +2,13 @@
 title: "Unreleased"
 ---
 
+## macOS certificate trust
+
+- Cottontail apps now use macOS's system certificate bundle for default TLS
+  connections. This fixes HTTPS and update checks failing with
+  `unable to get local issuer certificate` on Macs without Homebrew's
+  certificate files, while preserving certificate verification and custom CAs.
+
 ## Cottontail capabilities
 
 - Cottontail's optional standard-library APIs now ship as capability modules

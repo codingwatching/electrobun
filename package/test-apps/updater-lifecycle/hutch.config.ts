@@ -1,4 +1,4 @@
-// @hutch cli=0.27.0-canary.2 cottontail=0.7.0-canary.2
+// @hutch cli=0.27.0-canary.3 cottontail=0.7.0-canary.4
 const electrobunVersion = process.env.ELECTROBUN_UPDATER_E2E_SDK_VERSION;
 
 if (!electrobunVersion) {
