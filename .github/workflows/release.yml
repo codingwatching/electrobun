@@ -52,8 +52,8 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     env:
-      EXPECTED_HUTCH_VERSION: '0.27.0-canary.4'
-      EXPECTED_COTTONTAIL_VERSION: '0.7.0-canary.6'
+      EXPECTED_HUTCH_VERSION: '0.27.0-canary.6'
+      EXPECTED_COTTONTAIL_VERSION: '0.7.0-canary.7'
 
     steps:
       - uses: actions/checkout@v6
