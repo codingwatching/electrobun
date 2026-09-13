@@ -8,6 +8,11 @@ import test from "node:test";
 // This is a launcher test, not Desktop runtime coverage. A copied Node binary
 // supplies an independent process.pid oracle and a deterministic exit fixture.
 const launcher = process.env.ELECTROBUN_TEST_LAUNCHER;
+if (process.env.ELECTROBUN_REQUIRE_TEST_LAUNCHER === "1") {
+  assert.equal(process.platform, "win32", "the required launcher gate needs Windows");
+  assert.equal(process.arch, "x64", "the release launcher gate targets Windows x64");
+  assert.ok(launcher, "ELECTROBUN_TEST_LAUNCHER must select the freshly built release launcher");
+}
 for (const channel of ["dev", "stable"]) {
   for (const fixture of [{ exit: "exit", code: 0 }, { exit: "exit", code: 9 },
     { exit: "exit", code: 0xc0000409 }, { exit: "exit", code: 0xc0000400 }, { exit: "self-terminate", code: 1 }]) {

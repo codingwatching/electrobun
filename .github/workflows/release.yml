@@ -239,6 +239,32 @@ jobs:
         run: node scripts/package-release.js
         working-directory: package
 
+      - name: Test Windows release validation contract
+        if: matrix.platform == 'win32'
+        run: node --test scripts/windows-release-validation.test.mjs
+        working-directory: package
+
+      - name: Test Windows profile paths and WebView2 teardown
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        working-directory: package
+        run: |
+          node scripts/test-windows-profile-paths.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Windows profile path tests failed" }
+          node scripts/run-cottontail-test.js src/shared/windows-webview2-lifecycle.test.ts
+          if ($LASTEXITCODE -ne 0) { throw "Windows WebView2 lifecycle tests failed" }
+
+      - name: Test Windows release launcher identity and full exit status
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        working-directory: package
+        env:
+          ELECTROBUN_REQUIRE_TEST_LAUNCHER: '1'
+        run: |
+          $env:ELECTROBUN_TEST_LAUNCHER = (Resolve-Path .\dist\launcher.exe).Path
+          node --test src/launcher/windows_process_identity.integration.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Windows release launcher identity tests failed" }
+
       - name: Test CEF remote debugging policy
         run: hutch test:cef-debug
         working-directory: package

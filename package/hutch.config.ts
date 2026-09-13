@@ -42,6 +42,9 @@ export default {
 		"test:views-url-native": "hutch scripts/test-views-url-native.js",
 		"test:core-host-transport": "node --test scripts/core-host-transport.test.mjs",
 		"test:windows-ui-native": "hutch scripts/test-windows-ui-native.js",
+		"test:windows-profile-paths": "node scripts/test-windows-profile-paths.mjs",
+		"test:windows-launcher-identity": "node --test src/launcher/windows_process_identity.integration.test.mjs",
+		"test:windows-release-contract": "node --test scripts/windows-release-validation.test.mjs",
 		"test:windows-ui-native-integration":
 			"hutch scripts/test-windows-ui-native.js --require-native-wrapper",
 		"test:installer-ui":
@@ -52,7 +55,7 @@ export default {
 		"test:devkit-manifest":
 			"node scripts/run-cottontail-test.js src/shared/native-devkit-manifest.test.ts && node --test scripts/validate-native-devkit.test.mjs scripts/electrobun-version-runtime.test.mjs",
 		"test:version-bump":
-			"node --test scripts/version-config.test.mjs scripts/release-git.test.mjs scripts/verify-release-version.test.mjs scripts/create-artifact-index.test.mjs scripts/verify-release-assets.test.mjs scripts/release-publication-contract.test.mjs scripts/sync-release-toolchain-pins.test.mjs",
+			"node --test scripts/version-config.test.mjs scripts/release-git.test.mjs scripts/verify-release-version.test.mjs scripts/create-artifact-index.test.mjs scripts/verify-release-assets.test.mjs scripts/release-publication-contract.test.mjs scripts/sync-release-toolchain-pins.test.mjs scripts/windows-release-validation.test.mjs",
 		"test:linux-native-dialog":
 			"node scripts/run-cottontail-test.js src/shared/linux-native-file-dialog.test.ts && scripts/test-linux-native-file-dialog.sh",
 		"test:cef-debug": ["hutch", "scripts/test-cef-remote-debugging.ts"],
