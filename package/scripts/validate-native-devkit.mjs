@@ -210,6 +210,17 @@ export function validateNativeDevkitManifest(options) {
 			`toolchains.${language}.defaultVersion`,
 		);
 	}
+	if (options.expectedAppCottontailVersion !== undefined) {
+		const expectedAppVersion = exactVersion(
+			options.expectedAppCottontailVersion,
+			"expected app Cottontail version",
+		);
+		if (toolchains.cottontail.defaultVersion !== expectedAppVersion) {
+			fail(
+				`toolchains.cottontail.defaultVersion ${JSON.stringify(toolchains.cottontail.defaultVersion)} does not match expected app runtime ${JSON.stringify(expectedAppVersion)}`,
+			);
+		}
+	}
 	const odinToolchain = object(toolchains.odin, "toolchains.odin");
 	exactVersion(
 		odinToolchain.defaultVersion,

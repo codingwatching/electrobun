@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import process from "process";
 import { MACOS_DEPLOYMENT_TARGET } from "./macos-release.js";
 import { validateNativeDevkitManifest } from "./validate-native-devkit.mjs";
+import { parseAppCottontailVersion } from "./verify-release-toolchain.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,6 +140,9 @@ async function createTarballs() {
 		coreRoot: distPath,
 		expectedVersion: packageMetadata.version,
 		expectedTarget: devkitTarget,
+		expectedAppCottontailVersion: parseAppCottontailVersion(
+			fs.readFileSync(path.join(__dirname, "..", "src", "shared", "cottontail-version.ts"), "utf8"),
+		),
 	});
 	console.log("Validation passed: native devkit manifest matches release contents");
 

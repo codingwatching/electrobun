@@ -66,6 +66,26 @@ export function parseHutchPragma(source, label = "hutch.config.ts") {
 	};
 }
 
+export function parseAppCottontailVersion(source, label = "package/src/shared/cottontail-version.ts") {
+	const declarations = [...source.matchAll(/^[\t ]*export[\t ]+const[\t ]+COTTONTAIL_VERSION\b[^\r\n]*$/gm)];
+	if (declarations.length !== 1) {
+		fail(`${label} must contain exactly one exported COTTONTAIL_VERSION constant; found ${declarations.length}`);
+	}
+	const match = /^[\t ]*export[\t ]+const[\t ]+COTTONTAIL_VERSION[\t ]*=[\t ]*(["'])([^"'\r\n]+)\1;[\t ]*$/.exec(declarations[0][0]);
+	if (!match) fail(`${label} COTTONTAIL_VERSION must be a quoted const declaration ending in a semicolon`);
+	return assertExactVersion(match[2], `${label} app Cottontail pin`);
+}
+
+export function verifyAppCottontailVersion({ source, manifest, expectedVersion }) {
+	assertExactVersion(expectedVersion, "EXPECTED_APP_COTTONTAIL_VERSION");
+	const sourceVersion = parseAppCottontailVersion(source);
+	assertEqual(sourceVersion, expectedVersion, "source app Cottontail pin");
+	const emittedVersion = manifest?.toolchains?.cottontail?.defaultVersion;
+	assertExactVersion(emittedVersion, "emitted app Cottontail pin");
+	assertEqual(emittedVersion, expectedVersion, "emitted app Cottontail pin");
+	return emittedVersion;
+}
+
 function run(command, args, cwd, environment = {}) {
 	const result = spawnSync(command, args, {
 		cwd,
@@ -183,8 +203,10 @@ function verifyProjectSelection({ directory, expectedHutch, expectedCottontail }
 export function verifyReleaseToolchain(environment = process.env) {
 	const expectedHutch = environment.EXPECTED_HUTCH_VERSION;
 	const expectedCottontail = environment.EXPECTED_COTTONTAIL_VERSION;
+	const expectedAppCottontail = environment.EXPECTED_APP_COTTONTAIL_VERSION;
 	assertExactVersion(expectedHutch, "EXPECTED_HUTCH_VERSION");
 	assertExactVersion(expectedCottontail, "EXPECTED_COTTONTAIL_VERSION");
+	assertExactVersion(expectedAppCottontail, "EXPECTED_APP_COTTONTAIL_VERSION");
 	const expectedHutchChannel = releaseChannel(expectedHutch, "EXPECTED_HUTCH_VERSION");
 	const expectedCottontailChannel = releaseChannel(
 		expectedCottontail,
@@ -222,6 +244,18 @@ export function verifyReleaseToolchain(environment = process.env) {
 			`${project.name} Cottontail pin`,
 		);
 	}
+
+	// The SDK's application runtime is an independent release component. Verify
+	// both its source pin and the emitted devkit, without equating it to the
+	// Cottontail that executes the build through Hutch's pragma.
+	const appSourcePath = join(repositoryRoot, "package", "src", "shared", "cottontail-version.ts");
+	const devkitPath = join(repositoryRoot, "package", "dist", "native-devkit.json");
+	verifyAppCottontailVersion({
+		source: readFileSync(appSourcePath, "utf8"),
+		manifest: JSON.parse(readFileSync(devkitPath, "utf8")),
+		expectedVersion: expectedAppCottontail,
+	});
+	console.log(`App Cottontail ${expectedAppCottontail}: ${appSourcePath} and ${devkitPath}`);
 
 	// `hutch self update` advances the tested Hutch+Cottontail pair together;
 	// there is no separate cottontail update. The no-selector cottontail

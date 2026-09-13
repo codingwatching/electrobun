@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
+	cpSync,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -99,6 +102,90 @@ test("validates an exact devkit contract and every declared path", () => {
 	} finally {
 		rmSync(coreRoot, { recursive: true, force: true });
 	}
+});
+
+test("rejects a stale emitted app runtime before packaging", (t) => {
+	const manifest = fixture();
+	manifest.toolchains.cottontail.defaultVersion = "0.7.0-canary.6";
+	const coreRoot = makeCore(manifest);
+	t.after(() => rmSync(coreRoot, { recursive: true, force: true }));
+	assert.throws(
+		() => validateNativeDevkitManifest({
+			coreRoot,
+			...expected,
+			expectedAppCottontailVersion: "0.7.0-canary.7",
+		}),
+		/toolchains\.cottontail\.defaultVersion "0\.7\.0-canary\.6" does not match expected app runtime "0\.7\.0-canary\.7"/,
+	);
+	assert.equal(
+		validateNativeDevkitManifest({ coreRoot, ...expected }).toolchains.cottontail.defaultVersion,
+		"0.7.0-canary.6",
+		"generic manifest validation remains independent of a release's app pin",
+	);
+});
+
+test("validates the explicit app runtime expectation", (t) => {
+	const coreRoot = makeCore();
+	t.after(() => rmSync(coreRoot, { recursive: true, force: true }));
+	const appVersion = fixture().toolchains.cottontail.defaultVersion;
+	assert.equal(
+		validateNativeDevkitManifest({
+			coreRoot, ...expected, expectedAppCottontailVersion: appVersion,
+		}).toolchains.cottontail.defaultVersion,
+		appVersion,
+	);
+	for (const invalid of ["canary", "^0.7.0", "0.7.0-canary.01", ""]) {
+		assert.throws(
+			() => validateNativeDevkitManifest({
+				coreRoot, ...expected, expectedAppCottontailVersion: invalid,
+			}),
+			/expected app Cottontail version/,
+		);
+	}
+});
+
+test("the packaging entrypoint rejects stale app metadata before creating archives", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "electrobun-package-app-pin-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const packageRoot = join(root, "package");
+	const scriptsRoot = join(packageRoot, "scripts");
+	const sharedRoot = join(packageRoot, "src", "shared");
+	mkdirSync(scriptsRoot, { recursive: true });
+	mkdirSync(sharedRoot, { recursive: true });
+	for (const name of ["package-release.js", "validate-native-devkit.mjs", "verify-release-toolchain.mjs", "macos-release.js"]) {
+		cpSync(new URL(`./${name}`, import.meta.url), join(scriptsRoot, name));
+	}
+	cpSync(new URL("../src/shared/strict-semver.js", import.meta.url), join(sharedRoot, "strict-semver.js"));
+	writeFileSync(join(sharedRoot, "cottontail-version.ts"), 'export const COTTONTAIL_VERSION = "0.7.0-canary.7";\n');
+	writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ type: "module", version: expected.expectedVersion }));
+	// This fixture exercises the real packaging entrypoint and metadata guard;
+	// native compilation and ABI verification have their own release checks.
+	writeFileSync(join(packageRoot, "build.ts"), "// Fixture build has already emitted dist.\n");
+	for (const name of ["verify-macho-deployment-target.js", "verify-macho-code-signing.js", "verify-linux-elf-abi.js"]) {
+		writeFileSync(join(scriptsRoot, name), "// Native ABI verification is outside this metadata fixture.\n");
+	}
+	const manifest = fixture();
+	manifest.target = {
+		os: process.platform === "darwin" ? "macos" : process.platform === "win32" ? "win" : "linux",
+		arch: process.platform === "win32" ? "x64" : process.arch,
+	};
+	manifest.toolchains.cottontail.defaultVersion = "0.7.0-canary.6";
+	const originalCore = makeCore(manifest);
+	t.after(() => rmSync(originalCore, { recursive: true, force: true }));
+	const distRoot = join(packageRoot, "dist");
+	cpSync(originalCore, distRoot, { recursive: true });
+	if (process.platform === "win32") writeFileSync(join(distRoot, "launcher.exe"), "fixture");
+	const result = spawnSync(process.execPath, [join(scriptsRoot, "package-release.js")], {
+		cwd: root,
+		env: { ...process.env, HUTCH_BINARY: process.execPath },
+		encoding: "utf8",
+		timeout: 30_000,
+	});
+	assert.ifError(result.error);
+	assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+	assert.match(result.stderr, /toolchains\.cottontail\.defaultVersion "0\.7\.0-canary\.6" does not match expected app runtime "0\.7\.0-canary\.7"/);
+	const platformName = process.platform === "win32" ? "win" : process.platform;
+	assert.equal(existsSync(join(packageRoot, `electrobun-core-${platformName}-${manifest.target.arch}.tar.gz`)), false);
 });
 
 test("rejects product or target drift", () => {

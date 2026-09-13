@@ -13,7 +13,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseStrictSemVer } from "../src/shared/strict-semver.js";
-import { parseHutchPragma } from "./verify-release-toolchain.mjs";
+import { parseAppCottontailVersion, parseHutchPragma } from "./verify-release-toolchain.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepositoryRoot = dirname(dirname(dirname(scriptPath)));
@@ -65,6 +65,7 @@ function replaceWorkflowField(source, name, value) {
 export function updateReleaseWorkflowPins(source, pins) {
 	assertExactVersion(pins.hutch, "canonical Hutch pin");
 	assertExactVersion(pins.cottontail, "canonical Cottontail pin");
+	assertExactVersion(pins.appCottontail, "canonical app Cottontail pin");
 	let updated = replaceWorkflowField(
 		source,
 		"EXPECTED_HUTCH_VERSION",
@@ -74,6 +75,11 @@ export function updateReleaseWorkflowPins(source, pins) {
 		updated,
 		"EXPECTED_COTTONTAIL_VERSION",
 		pins.cottontail,
+	);
+	updated = replaceWorkflowField(
+		updated,
+		"EXPECTED_APP_COTTONTAIL_VERSION",
+		pins.appCottontail,
 	);
 	return updated;
 }
@@ -171,10 +177,14 @@ export function syncReleaseToolchainPins(repositoryRoot = defaultRepositoryRoot)
 		"guides",
 		"migrating-to-v2.mdx",
 	);
-	const pins = parseHutchPragma(
-		readFileSync(configPath, "utf8"),
-		"package/hutch.config.ts",
-	);
+	const pins = {
+		...parseHutchPragma(readFileSync(configPath, "utf8"), "package/hutch.config.ts"),
+		// This pin is maintained separately from the build pragma. Synchronizing
+		// build tools must not silently change the runtime shipped in apps.
+		appCottontail: parseAppCottontailVersion(readFileSync(
+			join(root, "package", "src", "shared", "cottontail-version.ts"), "utf8",
+		)),
+	};
 
 	// Compute and validate every update before replacing any target. This
 	// prevents a malformed later target from leaving an earlier one synchronized
@@ -219,7 +229,7 @@ if (invokedPath === import.meta.url) {
 			? `updated ${result.changed.join(", ")}`
 			: "already synchronized";
 		console.log(
-			`Hutch ${result.pins.hutch} and Cottontail ${result.pins.cottontail}: ${detail}.`,
+			`Hutch ${result.pins.hutch}, build Cottontail ${result.pins.cottontail}, app Cottontail ${result.pins.appCottontail}: ${detail}.`,
 		);
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : error);

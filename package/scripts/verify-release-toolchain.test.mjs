@@ -3,9 +3,61 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+	parseAppCottontailVersion,
 	parseHutchPragma,
+	verifyAppCottontailVersion,
 	verifyReleaseToolchain,
 } from "./verify-release-toolchain.mjs";
+
+test("app runtime provenance accepts an independent exact source pin", () => {
+	const build = parseHutchPragma("// @hutch cli=0.27.0-canary.6 cottontail=0.7.0-canary.7\n");
+	const source = '// App runtime component, independent of build tools.\r\nexport const COTTONTAIL_VERSION = "0.7.0-canary.6";\r\n';
+	const app = parseAppCottontailVersion(source);
+	assert.notEqual(app, build.cottontail);
+	assert.equal(verifyAppCottontailVersion({
+		source,
+		manifest: { toolchains: { cottontail: { defaultVersion: app } } },
+		expectedVersion: app,
+	}), app);
+});
+
+test("app runtime provenance rejects stale source and emitted pins independently", () => {
+	const expectedVersion = "0.7.0-canary.7";
+	const source = `export const COTTONTAIL_VERSION = "${expectedVersion}";\n`;
+	const manifest = { toolchains: { cottontail: { defaultVersion: expectedVersion } } };
+	assert.throws(() => verifyAppCottontailVersion({
+		source: source.replace("canary.7", "canary.6"), manifest, expectedVersion,
+	}), /source app Cottontail pin: expected "0\.7\.0-canary\.7", got "0\.7\.0-canary\.6"/);
+	assert.throws(() => verifyAppCottontailVersion({
+		source,
+		manifest: { toolchains: { cottontail: { defaultVersion: "0.7.0-canary.6" } } },
+		expectedVersion,
+	}), /emitted app Cottontail pin: expected "0\.7\.0-canary\.7", got "0\.7\.0-canary\.6"/);
+	assert.throws(() => verifyAppCottontailVersion({ source, manifest: {}, expectedVersion }),
+		/emitted app Cottontail pin must be an exact SemVer/);
+});
+
+test("app runtime source parsing rejects missing, duplicate, and non-exact constants", () => {
+	for (const source of ["", 'const COTTONTAIL_VERSION = "0.7.0";\n']) {
+		assert.throws(() => parseAppCottontailVersion(source), /exactly one exported COTTONTAIL_VERSION constant; found 0/);
+	}
+	assert.throws(() => parseAppCottontailVersion('export const COTTONTAIL_VERSION = "0.7.0";\n'.repeat(2)),
+		/exactly one exported COTTONTAIL_VERSION constant; found 2/);
+	assert.throws(() => parseAppCottontailVersion('export const COTTONTAIL_VERSION = otherPin;\n'), /quoted const declaration/);
+	for (const version of ["canary", "^0.7.0", "0.7.0-canary.01"]) {
+		assert.throws(() => parseAppCottontailVersion(`export const COTTONTAIL_VERSION = "${version}";\n`), /app Cottontail pin must be an exact SemVer/);
+	}
+});
+
+test("release provenance requires a separate exact app expectation before probing", () => {
+	for (const version of [undefined, "canary", "^0.7.0", "0.7.0-canary.01"]) {
+		assert.throws(() => verifyReleaseToolchain({
+			EXPECTED_HUTCH_VERSION: "0.27.0-canary.6",
+			EXPECTED_COTTONTAIL_VERSION: "0.7.0-canary.7",
+			EXPECTED_APP_COTTONTAIL_VERSION: version,
+		}), /EXPECTED_APP_COTTONTAIL_VERSION must be an exact SemVer/);
+	}
+});
 
 test("release provenance accepts only the exact Hutch pragma format", () => {
 	assert.deepEqual(
@@ -200,6 +252,13 @@ test("release CI verifies provenance before all four Kitchen builds", () => {
 	assert.match(
 		workflow,
 		new RegExp(`^      EXPECTED_COTTONTAIL_VERSION: '${exact(pins.cottontail)}'$`, "m"),
+	);
+	const appVersion = parseAppCottontailVersion(readFileSync(
+		new URL("../src/shared/cottontail-version.ts", import.meta.url), "utf8",
+	));
+	assert.match(
+		workflow,
+		new RegExp(`^      EXPECTED_APP_COTTONTAIL_VERSION: '${exact(appVersion)}'$`, "m"),
 	);
 	for (const lifecycleToken of [
 		"test:linux-extractor",

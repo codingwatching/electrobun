@@ -20,11 +20,11 @@ import {
 	updateReleaseWorkflowPins,
 } from "./sync-release-toolchain-pins.mjs";
 
-const oldPins = { hutch: "0.23.0", cottontail: "0.5.0" };
-const newPins = { hutch: "0.24.0", cottontail: "0.6.0+release.1" };
+const oldPins = { hutch: "0.23.0", cottontail: "0.5.0", appCottontail: "0.4.0" };
+const newPins = { hutch: "0.24.0", cottontail: "0.6.0+release.1", appCottontail: "0.5.1" };
 
 function workflow(pins = oldPins) {
-	return `name: Release\r\n\r\njobs:\r\n  build:\r\n    env:\r\n      EXPECTED_HUTCH_VERSION: '${pins.hutch}'\r\n      EXPECTED_COTTONTAIL_VERSION: '${pins.cottontail}'\r\n`;
+	return `name: Release\r\n\r\njobs:\r\n  build:\r\n    env:\r\n      EXPECTED_HUTCH_VERSION: '${pins.hutch}'\r\n      EXPECTED_COTTONTAIL_VERSION: '${pins.cottontail}'\r\n      EXPECTED_APP_COTTONTAIL_VERSION: '${pins.appCottontail}'\r\n`;
 }
 
 function resolver(version = oldPins.hutch) {
@@ -39,6 +39,7 @@ function createRepositoryFixture(t, options = {}) {
 	const root = mkdtempSync(join(tmpdir(), "electrobun-pin-sync-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const packageDir = join(root, "package");
+	const sharedDir = join(packageDir, "src", "shared");
 	const workflowDir = join(root, ".github", "workflows");
 	const resolverDir = join(root, "npm", "electrobun", "bin");
 	const migrationGuideDir = join(
@@ -52,6 +53,7 @@ function createRepositoryFixture(t, options = {}) {
 	);
 	for (const directory of [
 		packageDir,
+		sharedDir,
 		workflowDir,
 		resolverDir,
 		migrationGuideDir,
@@ -60,6 +62,7 @@ function createRepositoryFixture(t, options = {}) {
 	}
 	const paths = {
 		config: join(packageDir, "hutch.config.ts"),
+		appVersion: join(sharedDir, "cottontail-version.ts"),
 		workflow: join(workflowDir, "release.yml"),
 		resolver: join(resolverDir, "resolve-hutch.cjs"),
 		migrationGuide: join(migrationGuideDir, "migrating-to-v2.mdx"),
@@ -70,6 +73,10 @@ function createRepositoryFixture(t, options = {}) {
 			`// @hutch cli=${newPins.hutch} cottontail=${newPins.cottontail}\nexport default {};\n`,
 	);
 	writeFileSync(paths.workflow, options.workflow ?? workflow());
+	writeFileSync(
+		paths.appVersion,
+		options.appVersion ?? `export const COTTONTAIL_VERSION = "${newPins.appCottontail}";\n`,
+	);
 	writeFileSync(paths.resolver, options.resolver ?? resolver());
 	writeFileSync(
 		paths.migrationGuide,
@@ -126,6 +133,28 @@ test("pin synchronization is atomic per file and reaches a fixed point", (t) => 
 	assert.deepEqual(second, { pins: newPins, changed: [] });
 });
 
+test("build pin synchronization preserves the independent app runtime pin", (t) => {
+	const fixture = createRepositoryFixture(t);
+	const appSource = readFileSync(fixture.paths.appVersion, "utf8");
+	const configSource = readFileSync(fixture.paths.config, "utf8");
+	assert.notEqual(newPins.cottontail, newPins.appCottontail);
+	assert.deepEqual(syncReleaseToolchainPins(fixture.root).pins, newPins);
+	assert.equal(readFileSync(fixture.paths.workflow, "utf8"), workflow(newPins));
+	assert.equal(readFileSync(fixture.paths.appVersion, "utf8"), appSource);
+	assert.equal(readFileSync(fixture.paths.config, "utf8"), configSource);
+	assert.deepEqual(syncReleaseToolchainPins(fixture.root), { pins: newPins, changed: [] });
+});
+
+test("a malformed canonical app pin prevents every target mutation", (t) => {
+	const fixture = createRepositoryFixture(t, {
+		appVersion: 'export const COTTONTAIL_VERSION = "canary";\n',
+	});
+	assert.throws(() => syncReleaseToolchainPins(fixture.root), /app Cottontail pin must be an exact SemVer/);
+	assert.equal(readFileSync(fixture.paths.workflow, "utf8"), workflow());
+	assert.equal(readFileSync(fixture.paths.resolver, "utf8"), resolver());
+	assert.equal(readFileSync(fixture.paths.migrationGuide, "utf8"), migrationGuide());
+});
+
 test("pin synchronization validates every target before mutating any", (t) => {
 	const originalWorkflow = workflow();
 	const fixture = createRepositoryFixture(t, {
@@ -172,6 +201,14 @@ test("pin synchronization rejects malformed canonical pragma pins", (t) => {
 });
 
 test("workflow synchronization rejects missing, duplicate, and malformed fields", () => {
+	assert.throws(
+		() => updateReleaseWorkflowPins(workflow().replace(/^.*EXPECTED_APP_COTTONTAIL_VERSION[^\n]*\n/m, ""), newPins),
+		/exactly one EXPECTED_APP_COTTONTAIL_VERSION field; found 0/,
+	);
+	assert.throws(
+		() => updateReleaseWorkflowPins(`${workflow()}      EXPECTED_APP_COTTONTAIL_VERSION: '0.4.0'\n`, newPins),
+		/exactly one EXPECTED_APP_COTTONTAIL_VERSION field; found 2/,
+	);
 	assert.throws(
 		() =>
 			updateReleaseWorkflowPins(
