@@ -2,6 +2,19 @@
 title: "Unreleased"
 ---
 
+## Windows profiles and lifecycle
+
+- WebView2 partitions now use compact SHA-256 directory components for unsafe,
+  uppercase, Unicode, or long names, leaving room for Chromium's temporary
+  preference files. Safe, non-reserved lowercase ASCII names of at most 80
+  characters keep their existing directories. Other names select new storage
+  directories; existing directories are neither migrated nor deleted.
+- WebView2 controllers close on the native UI thread before the app quits,
+  allowing browser profile state to be saved during shutdown.
+- Windows launchers preserve the full 32-bit process exit status and log the
+  child PID with its kernel creation time. Crash statuses are no longer
+  truncated to their low byte, and logs distinguish reused process IDs.
+
 ## Portable compression
 
 - Cottontail's compression capability links Brotli and Zstandard statically.
