@@ -3933,6 +3933,7 @@ public:
             controller->Close();
             controller = nullptr;
         }
+        compositionController = nullptr;
         webview = nullptr;
     }
 
@@ -7996,6 +7997,11 @@ static std::shared_ptr<WebView2View> createWebView2View(uint32_t webviewId,
                         channel,
                         partition,
                         view->webviewId);
+                    if (!electrobun::canPersistWebView2UserDataPath(userDataFolder)) {
+                        ::log("ERROR: WebView2 profile path leaves insufficient room for Chromium's atomic preference writes");
+                        view->setCreationFailed(true);
+                        return;
+                    }
                     SHCreateDirectoryExW(
                         nullptr, userDataFolder.c_str(), nullptr);
                 } else {
@@ -8651,6 +8657,26 @@ ELECTROBUN_EXPORT void startEventLoop(const char* identifier, const char* name, 
 }
 
 
+static void closeWebView2ViewsOnMainThread() {
+    // The native owner and event handlers retain controllers until process
+    // exit. WebView2 documents explicit Close to release resources and break
+    // controller/event-handler reference cycles before the message loop ends.
+    std::vector<std::shared_ptr<WebView2View>> views;
+    {
+        std::lock_guard<std::mutex> lock(g_retainedAbstractViewsMutex);
+        for (const auto& [webviewId, view] : g_retainedAbstractViews) {
+            (void)webviewId;
+            if (auto webview = std::dynamic_pointer_cast<WebView2View>(view)) {
+                views.push_back(std::move(webview));
+            }
+        }
+    }
+    for (const auto& view : views) {
+        g_pendingResizeQueue.remove(view.get());
+        view->remove();
+    }
+}
+
 ELECTROBUN_EXPORT void stopEventLoop() {
     if (g_eventLoopStopping.exchange(true)) {
         return;
@@ -8660,13 +8686,17 @@ ELECTROBUN_EXPORT void stopEventLoop() {
 
     if (isCEFAvailable() && g_cef_initialized.load()) {
         MainThreadDispatcher::dispatch_async([]() {
+            // An app can contain WebView2 views even when CEF is available.
+            closeWebView2ViewsOnMainThread();
             beginCEFShutdownOnMainThread();
         });
     } else {
-        // Post WM_QUIT to the main thread's message queue
-        if (g_mainThreadId != 0) {
-            PostThreadMessage(g_mainThreadId, WM_QUIT, 0, 0);
-        }
+        MainThreadDispatcher::dispatch_async([]() {
+            closeWebView2ViewsOnMainThread();
+            if (g_mainThreadId != 0) {
+                PostThreadMessage(g_mainThreadId, WM_QUIT, 0, 0);
+            }
+        });
     }
 }
 

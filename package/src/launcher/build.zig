@@ -70,6 +70,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_windows_spawn_tests = b.addRunArtifact(windows_spawn_tests);
 
+    const process_identity_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("windows_process_identity.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_process_identity_tests = b.addRunArtifact(process_identity_tests);
+    const identity_test_step = b.step("test:process-identity", "Test real launcher child identity and exit reporting");
+    identity_test_step.dependOn(&run_process_identity_tests.step);
+
     const uninstall_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("uninstall.zig"),
@@ -83,5 +94,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_automation_tests.step);
     test_step.dependOn(&run_windows_spawn_tests.step);
+    test_step.dependOn(&run_process_identity_tests.step);
     test_step.dependOn(&run_uninstall_tests.step);
 }

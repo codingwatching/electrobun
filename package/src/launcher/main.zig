@@ -4,6 +4,7 @@ const automation = @import("automation.zig");
 const linux_dependencies = @import("linux_dependencies.zig");
 const uninstall = @import("uninstall.zig");
 const windows_spawn = @import("windows_spawn.zig");
+const windows_process_identity = @import("windows_process_identity.zig");
 const launcher_pid_environment_variable = "ELECTROBUN_LAUNCHER_PID";
 const c = @cImport({
     @cInclude("signal.h");
@@ -634,20 +635,26 @@ pub fn main(init: std.process.Init) !void {
             return error.SpawnFailed;
         }
 
-        std.debug.print("Child process spawned with PID {d}\n", .{pi.dwProcessId});
+        const identity = windows_process_identity.logSpawn(pi.hProcess);
 
         // Wait for the process to complete
-        _ = win.WaitForSingleObject(pi.hProcess, win.INFINITE);
+        const wait_result = win.WaitForSingleObject(pi.hProcess, win.INFINITE);
 
         var exit_code: win.DWORD = 0;
-        _ = win.GetExitCodeProcess(pi.hProcess, &exit_code);
+        const has_exit_code = win.GetExitCodeProcess(pi.hProcess, &exit_code).toBool();
+        if (wait_result == 0 and has_exit_code) {
+            windows_process_identity.logExit(identity, exit_code);
+        } else {
+            windows_process_identity.logWaitError(identity);
+        }
 
         _ = win.CloseHandle(pi.hProcess);
         _ = win.CloseHandle(pi.hThread);
 
+        if (wait_result != 0 or !has_exit_code) return error.ChildWaitFailed;
         std.debug.print("Child process exited with code: {d}\n", .{exit_code});
         if (exit_code != 0) {
-            std.process.exit(@intCast(exit_code));
+            windows_process_identity.exit(exit_code);
         }
     } else {
         // Dev build or non-Windows: Use standard spawn with inherited I/O
@@ -669,17 +676,44 @@ pub fn main(init: std.process.Init) !void {
         });
         child_pid = child_process.id.?;
 
-        const child_pid_value: usize = if (builtin.os.tag == .windows)
-            @intFromPtr(child_pid)
+        const identity = if (builtin.os.tag == .windows)
+            windows_process_identity.logSpawn(child_pid)
         else
-            @intCast(child_pid);
-        std.debug.print("Child process spawned with PID {d}\n", .{child_pid_value});
+            null;
+        if (builtin.os.tag != .windows) std.debug.print("Child process spawned with PID {d}\n", .{child_pid});
+
+        // Zig's Windows Child.wait returns only u8 and closes its HANDLE. Retain
+        // the exact child object so crash statuses cannot become misleading 9
+        // (0xC0000409) or even success (a nonzero status ending in 00).
+        const retained_handle: ?std.os.windows.HANDLE = if (builtin.os.tag == .windows)
+            windows_process_identity.retain(child_pid) catch |err| {
+                windows_process_identity.logWaitError(identity);
+                _ = child_process.wait(io) catch {};
+                return err;
+            }
+        else
+            null;
+        defer if (builtin.os.tag == .windows) if (retained_handle) |handle| windows_process_identity.close(handle);
 
         // Wait for the subprocess to complete
         const result = child_process.wait(io) catch |err| {
+            if (builtin.os.tag == .windows) windows_process_identity.logWaitError(identity);
             std.debug.print("Failed to wait for child process: {}\n", .{err});
+            if (builtin.os.tag == .windows) return err;
             return;
         };
+
+        if (builtin.os.tag == .windows) {
+            const code = windows_process_identity.exitCode(retained_handle.?) catch |err| {
+                windows_process_identity.logWaitError(identity);
+                return err;
+            };
+            windows_process_identity.logExit(identity, code);
+            std.debug.print("Child process exited with code: {d}\n", .{code});
+            // ExitProcess does not run Zig defers; close our duplicate first.
+            windows_process_identity.close(retained_handle.?);
+            windows_process_identity.exit(code);
+        }
 
         switch (result) {
             .exited => |code| {

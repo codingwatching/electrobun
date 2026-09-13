@@ -8,6 +8,20 @@
 #include "windows_profile_paths.h"
 
 int main() {
+    assert(electrobun::sha256Hex("") ==
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    assert(electrobun::sha256Hex("abc") ==
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    assert(electrobun::sha256Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    assert(electrobun::sha256Hex(std::string(1000000, 'a')) ==
+        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    assert(electrobun::buildWindowsWebView2PartitionDirectoryName(L"A:B") ==
+        L"~h-99cd436744b802e86621c3c02e3a0fadc96de68304001a58c2ab7c7cf3827133");
+    const auto emoji = electrobun::buildWindowsWebView2PartitionDirectoryName(L"\U0001f600");
+    assert(emoji == L"~h-82084f72a3aa3f0aeed4691c4f8e9163fb24edb0687ad148aa6ecd9d15a3941b");
+    assert(emoji == electrobun::buildWindowsWebView2PartitionDirectoryName(
+        std::wstring{wchar_t(0xd83d), wchar_t(0xde00)}));
     const std::wstring localAppData =
         L"C:\\Users\\\u5c71\u7530\\AppData\\Local";
     const std::wstring identifier = L"sh.blackboard.\u043f\u0440\u0438\u043c\u0435\u0440";
@@ -142,7 +156,61 @@ int main() {
             L"persist:\u0434\u0430\u043d\u043d\u044b\u0435",
             17);
     assert(webViewPersistent ==
-           webViewDefault + L"\\Partitions\\\u0434\u0430\u043d\u043d\u044b\u0435");
+           webViewDefault + L"\\Partitions\\~h-124c3caf280aa00cb4033279dda057072a85e644190c28c99f271ee11ec2866a");
+
+    const std::wstring dashRoot = L"dash-profile-" + std::wstring(64, L'a');
+    assert(electrobun::buildWindowsWebView2PartitionDirectoryName(dashRoot) ==
+           dashRoot); // Existing Dash root profiles remain at the same path.
+    const auto dashNested = electrobun::buildWebView2UserDataPath(
+        localAppData, identifier, channel,
+        L"persist:" + dashRoot + L":sites:same-workspace:native", 18);
+    assert(dashNested.rfind(webViewDefault + L"\\Partitions\\~h-", 0) == 0);
+    assert(dashNested.size() == webViewDefault.size() + std::wstring_view(L"\\Partitions\\").size() + 67);
+    assert(dashNested != electrobun::buildWebView2UserDataPath(
+        localAppData, identifier, channel,
+        L"persist:" + dashRoot + L"-sites-same-workspace-native", 18));
+
+    std::vector<std::wstring> identities = {
+        L"", L"default", L"Default", L"con", L"CON", L"nul", L"aux",
+        L"prn", L"com1", L"lpt9", L"clock$", L"conin$", L"conout$",
+        L"..", L"../outside", L"..\\outside", L"a:b", L"a/b", L"a\\b",
+        L"a?b", L"a*b", L"a\"b", L"a<b", L"a>b", L"a|b", L"a b",
+        L"profile.", L"profile ", L"profile", L"~con", L"~long", L"long",
+        L"a~3a~b", L"\u00e9", L"\u00c9", L"~e9~", L"e\u0301",
+        L"~h-99cd436744b802e86621c3c02e3a0fadc96de68304001a58c2ab7c7cf3827133",
+        std::wstring(201, L'a'),
+        std::wstring(202, L'a'), std::wstring(500, L'a'),
+    };
+    std::vector<std::wstring> mapped;
+    for (const auto& identity : identities) {
+        const auto directory =
+            electrobun::buildWindowsWebView2PartitionDirectoryName(identity);
+        assert(!directory.empty());
+        assert(directory.size() <= 80);
+        assert(directory.find_first_of(L"<>:\"/|?* .") == std::wstring::npos);
+        for (size_t offset = 0; offset < directory.size();) {
+            const auto end = directory.find(L'\\', offset);
+            const auto count = (end == std::wstring::npos ? directory.size() : end) - offset;
+            assert(count > 0 && count <= 255);
+            offset += count + 1;
+        }
+        for (const auto& previous : mapped) assert(previous != directory);
+        mapped.push_back(directory);
+        assert(directory ==
+               electrobun::buildWindowsWebView2PartitionDirectoryName(identity));
+    }
+
+    // Reproduce the real Dash nested Local State path: the old escaping made
+    // its final filename 222 characters but its GUID.tmp sibling 262, silently
+    // losing the cookie-encryption key despite a valid SQLite Cookies path.
+    const auto realNested = electrobun::buildWebView2UserDataPath(
+        L"C:\\Users\\yoav\\AppData\\Local", L"sh.blackboard.dash.profile-smoke", L"dev",
+        L"persist:" + dashRoot + L":sites:same-workspace:native", 18);
+    assert(electrobun::canPersistWebView2UserDataPath(realNested));
+    assert(realNested.size() + std::wstring_view(L"\\EBWebView\\Local State").size() + 40 < 260);
+    assert(!electrobun::canPersistWebView2UserDataPath(L""));
+    assert(electrobun::canPersistWebView2UserDataPath(std::wstring(182, L'a')));
+    assert(!electrobun::canPersistWebView2UserDataPath(std::wstring(183, L'a')));
 
     const std::wstring webViewEphemeral =
         electrobun::buildWebView2UserDataPath(
